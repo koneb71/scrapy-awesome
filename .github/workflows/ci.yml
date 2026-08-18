@@ -1,0 +1,129 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: backend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run scrapy-awesome doctor --json || true
+      - run: uv run pytest -q -m "not integration and not live"
+      - name: browsers for integration tests
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run patchright install --with-deps chromium
+      - name: integration tests
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          SA_LOGIN_HEADLESS: "1"
+        run: uv run pytest -q -m integration
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: frontend/dist
+          retention-days: 7
+
+  # Frozen (PyInstaller one-dir) build of the server+worker binary, smoke-tested as a black box:
+  # `doctor`, a fixture crawl (the binary re-execs itself as `--worker`), and `serve` (ready line,
+  # /health, bundled UI, clean SIGTERM exit). This is the sidecar the Tauri desktop app ships.
+  freeze:
+    name: freeze (${{ matrix.os }})
+    needs: [frontend]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --group freeze
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: frontend/dist
+      - name: build frozen bundle
+        run: uv run --group freeze pyinstaller packaging/scrapy-awesome.spec --noconfirm --log-level WARN
+      - name: smoke test
+        run: uv run python packaging/smoke_test.py
+      - name: bundle size
+        shell: bash
+        run: du -sh dist/scrapy-awesome
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrapy-awesome-${{ matrix.os }}
+          path: backend/dist/scrapy-awesome
+          retention-days: 7
+
+  # Desktop shell (Tauri v2): compiles the Rust wrapper against the frozen sidecar (unsigned).
+  desktop:
+    name: desktop (macos)
+    needs: [freeze]
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: scrapy-awesome-macos-latest
+          path: backend/dist/scrapy-awesome
+      - run: chmod +x ../backend/dist/scrapy-awesome/scrapy-awesome ../backend/dist/scrapy-awesome/_internal/patchright/driver/node
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri build --debug --bundles app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scrapy-awesome-desktop-macos
+          path: desktop/src-tauri/target/debug/bundle/macos/*.app
+          retention-days: 7

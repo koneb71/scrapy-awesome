@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>scrapy-awesome</title>
+    <style>
+      html, body { height: 100%; margin: 0; font-family: -apple-system, system-ui, sans-serif; background: #fafafa; color: #18181b; }
+      @media (prefers-color-scheme: dark) { html, body { background: #18181b; color: #fafafa; } }
+      .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: #6366f1; animation: pulse 1.2s infinite ease-in-out; }
+      @keyframes pulse { 0%, 100% { opacity: .3; transform: scale(.8);} 50% { opacity: 1; transform: scale(1);} }
+      .err { color: #dc2626; max-width: 520px; text-align: center; white-space: pre-wrap; font-size: 13px; }
+      code { font-size: 12px; opacity: .7; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="dot"></div>
+      <div id="msg">Starting the local scraper server…</div>
+      <div id="err" class="err"></div>
+    </div>
+    <script>
+      // The Rust side navigates this window to the authenticated UI once the sidecar prints its
+      // ready line; if it fails, it emits `sidecar-error` with the log tail.
+      if (window.__TAURI__?.event) {
+        window.__TAURI__.event.listen('sidecar-error', (e) => {
+          document.getElementById('msg').textContent = 'The scraper server could not start.';
+          document.getElementById('err').textContent = e.payload;
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,153 @@
+{
+  "manifest_version": "0.2",
+  "name": "scrapy-awesome",
+  "display_name": "scrapy-awesome",
+  "version": "0.1.0",
+  "description": "Scrape any site with your Claude subscription: builds a recipe in the local scrapy-awesome app, validates it, runs the crawl and exports CSV/JSON/XLSX.",
+  "long_description": "Local-first web scraper on Scrapy (stealth HTTP/Chrome + Playwright). Claude Desktop drives the app's tools through this MCP server: fetch a page, test selectors, save + validate a recipe, run, watch results in the app, export. Human-in-the-loop element picker (request_pick). Requires the scrapy-awesome desktop app (or a `scrapy-awesome` install) \u2014 set the binary path below.",
+  "author": {
+    "name": "scrapy-awesome contributors",
+    "url": "https://github.com/neiellcare/scrapy-awesome"
+  },
+  "homepage": "https://github.com/neiellcare/scrapy-awesome",
+  "documentation": "https://github.com/neiellcare/scrapy-awesome/blob/main/plugin/README.md",
+  "license": "MIT",
+  "keywords": [
+    "scraping",
+    "scrapy",
+    "crawler",
+    "csv",
+    "excel"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "${user_config.sidecar_path}",
+    "mcp_config": {
+      "command": "${user_config.sidecar_path}",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
+    }
+  },
+  "user_config": {
+    "sidecar_path": {
+      "type": "file",
+      "title": "scrapy-awesome binary",
+      "description": "The app's bundled binary (macOS: /Applications/scrapy-awesome.app/Contents/Resources/sidecar/scrapy-awesome) or the `scrapy-awesome` console script of a Python install.",
+      "default": "/Applications/scrapy-awesome.app/Contents/Resources/sidecar/scrapy-awesome",
+      "required": true
+    }
+  },
+  "tools": [
+    {
+      "name": "app_status",
+      "description": "Health of the local scrapy-awesome app: URL, version, active runs, data dir, and the"
+    },
+    {
+      "name": "open_ui",
+      "description": "Open the scrapy-awesome UI in the user's browser at a route, e.g. `/recipes/<id>` to"
+    },
+    {
+      "name": "fetch_page",
+      "description": "Fetch a page through the real crawl engine (auto-escalating http \u2192 browser \u2192"
+    },
+    {
+      "name": "page_outline",
+      "description": "Compact DOM outline of a cached page: scripts/styles removed, long text truncated,"
+    },
+    {
+      "name": "page_markdown",
+      "description": "Readable markdown of a cached page \u2014 main content only when `fit` (default), the whole"
+    },
+    {
+      "name": "search_page",
+      "description": "Where does this text appear on the cached page? Returns matching elements with a CSS"
+    },
+    {
+      "name": "test_selector",
+      "description": "Run a CSS or XPath selector against a cached page. Without `container`: match count,"
+    },
+    {
+      "name": "list_json_blobs",
+      "description": "Embedded JSON on the page (`__NEXT_DATA__`, `application/ld+json`, inline state)."
+    },
+    {
+      "name": "recipe_schema",
+      "description": "JSON schema of a recipe (the portable scrape definition). Fields have `name`,"
+    },
+    {
+      "name": "list_recipes",
+      "description": "Saved recipes (id, name, version, seed URL, field names)."
+    },
+    {
+      "name": "get_recipe",
+      "description": "Full recipe JSON by id (plus version and readiness errors)."
+    },
+    {
+      "name": "save_recipe",
+      "description": "Validate and save a recipe (create, or update `recipe_id` \u2192 new version). Returns the"
+    },
+    {
+      "name": "validate_recipe",
+      "description": "Preview a saved recipe the way the crawler will run it: (optionally) fetch the standard"
+    },
+    {
+      "name": "request_pick",
+      "description": "Ask the person to click an element in the app's visual picker (e.g. \"click the price"
+    },
+    {
+      "name": "get_pick",
+      "description": "Poll a pick request (long-poll up to `wait_seconds`). Status is `pending`, `answered`"
+    },
+    {
+      "name": "start_run",
+      "description": "Start crawling a saved recipe in the background (deterministic, zero tokens). Returns"
+    },
+    {
+      "name": "run_status",
+      "description": "Status and counters of a run (items, pages, blocked, escalations, tier mix). With"
+    },
+    {
+      "name": "get_rows",
+      "description": "Scraped rows of a run (paged). Rows carry the recipe fields plus `_url`,"
+    },
+    {
+      "name": "stop_run",
+      "description": "Gracefully stop a run (finishes in-flight pages; resumable later)."
+    },
+    {
+      "name": "cancel_run",
+      "description": "Kill a run immediately."
+    },
+    {
+      "name": "resume_run",
+      "description": "Resume a stopped/failed run from its checkpoint (same recipe; field selector changes"
+    },
+    {
+      "name": "list_runs",
+      "description": "Recent runs (id, recipe, status, items, pages)."
+    },
+    {
+      "name": "get_failed_pages",
+      "description": "Pages of a run the crawler fetched but could not extract (list page with no items,"
+    },
+    {
+      "name": "submit_rows",
+      "description": "Hand back rows you extracted for a failed page (see `get_failed_pages`). For a `list`"
+    },
+    {
+      "name": "export_run",
+      "description": "Export a run's rows as `json`, `jsonl`, `csv` or `xlsx`. Writes into the run"
+    }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "claude_desktop": ">=0.10.0"
+  }
+}

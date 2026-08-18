@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "scrapy-awesome": {
+      "command": "uv",
+      "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}/../backend", "scrapy-awesome", "mcp"],
+      "env": {}
+    }
+  }
+}

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.spec.bak
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Tauri
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+
+# App data / runs created during local dev or tests
+out/
+.scrapy/
+httpcache/
+*.sqlite3
+*.sqlite3-*
+scratch/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

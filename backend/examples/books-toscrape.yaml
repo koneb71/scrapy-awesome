@@ -1,0 +1,19 @@
+name: Books to Scrape
+seeds: ["https://books.toscrape.com/"]
+intent: Every book with title, price, rating and availability; follow to detail for description and UPC
+list:
+  container: article.product_pod
+detail:
+  enabled: true
+  link: { css: "h3 a" }
+pagination: { kind: next_link, selector: "li.next a", max_pages: 50 }
+fields:
+  - { name: title, extract: { css: "h3 a", attr: title }, required: true }
+  - { name: price, type: price, extract: { css: ".price_color::text" } }
+  - { name: rating, type: enum, enum: [One, Two, Three, Four, Five], extract: { css: "p.star-rating::attr(class)", regex: "star-rating (\\w+)" } }
+  - { name: in_stock, type: bool, extract: { css: ".availability::text" } }
+  - { name: image, type: image, extract: { css: ".image_container img::attr(src)" } }
+  - { name: description, scope: detail, extract: { css: "#product_description ~ p::text" } }
+  - { name: upc, scope: detail, extract: { xpath: "//th[text()='UPC']/following-sibling::td/text()" } }
+  - { name: category, scope: detail, extract: { css: "ul.breadcrumb li:nth-child(3) a::text" } }
+limits: { download_delay: 0.3, max_pages: 3 }

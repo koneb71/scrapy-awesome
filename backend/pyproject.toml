@@ -1,0 +1,115 @@
+[project]
+name = "scrapy-awesome"
+version = "0.1.0"
+description = "Local-first, AI-assisted interactive web scraper built on Scrapy"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+authors = [{ name = "scrapy-awesome contributors" }]
+keywords = ["scrapy", "scraping", "playwright", "llm", "claude", "gemini", "local-first"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Framework :: Scrapy",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+
+dependencies = [
+  # crawling
+  "scrapy>=2.17",
+  "scrapy-stealth==0.6.*",
+  "scrapy-playwright>=0.0.48",
+  "patchright>=1.62",
+  "curl-cffi>=0.16",
+  "parsel>=1.11",
+  "price-parser>=0.4",
+  "dateparser>=1.2",
+  # server
+  "fastapi>=0.116",
+  "uvicorn[standard]>=0.35",
+  "websockets>=15",
+  "httpx>=0.28",
+  "pydantic>=2.11",
+  "pydantic-settings>=2.10",
+  "sqlmodel>=0.0.24",
+  "aiosqlite>=0.21",
+  "python-multipart>=0.0.20",
+  # storage / config
+  "platformdirs>=4.3",
+  "keyring>=25",
+  "pyyaml>=6",
+  # content processing
+  "openpyxl>=3.1",
+  "trafilatura>=2.0",
+  "markdownify>=1.1",
+  "lxml>=5",
+  # scheduling
+  "apscheduler>=3.11,<4",
+  # cli
+  "typer>=0.16",
+  "rich>=14",
+  # llm / mcp
+  "mcp>=1.12",
+  "anthropic>=0.60",
+  "google-genai>=1.30",
+]
+
+[project.optional-dependencies]
+cookies = ["rookiepy>=0.5"]
+claude-code = ["claude-agent-sdk>=0.1"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.26",
+  "pytest-timeout>=2.3",
+  "ruff>=0.12",
+  "mypy>=1.16",
+  "types-pyyaml",
+  "pyinstaller>=6.14",
+]
+freeze = [
+    "claude-agent-sdk>=0.2",
+    "pyinstaller>=6.22.2",
+]
+
+[project.scripts]
+scrapy-awesome = "scrapy_awesome.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/neiellcare/scrapy-awesome"
+Issues = "https://github.com/neiellcare/scrapy-awesome/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scrapy_awesome"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["spikes"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+timeout = 300
+markers = [
+  "integration: spawns worker subprocesses / browsers (slower)",
+  "live: hits real network or paid APIs (opt-in)",
+]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true

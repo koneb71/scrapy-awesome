@@ -1,0 +1,17 @@
+name: Fixture static list
+seeds: ["http://127.0.0.1:8765/static/"]
+intent: All widgets with title, price, rating; follow to detail for description
+list:
+  container: article.product_pod
+detail:
+  enabled: true
+  link: { css: "h3 a" }
+pagination: { kind: next_link, selector: "li.next a", max_pages: 5 }
+fields:
+  - { name: title, extract: { css: "h3 a", attr: title }, required: true }
+  - { name: price, type: price, extract: { css: ".price_color::text" } }
+  - { name: rating, type: enum, enum: [One, Two, Three, Four, Five], extract: { css: "p.star-rating::attr(class)", regex: "star-rating (\\w+)" } }
+  - { name: in_stock, type: bool, extract: { css: ".availability::text" } }
+  - { name: description, scope: detail, extract: { css: "#product_description ~ p::text" } }
+  - { name: tags, type: list, scope: detail, extract: { css: "ul.tags li::text" } }
+limits: { download_delay: 0.1 }

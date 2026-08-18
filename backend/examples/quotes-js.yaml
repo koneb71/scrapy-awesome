@@ -1,0 +1,11 @@
+name: Quotes (JS-rendered)
+seeds: ["https://quotes.toscrape.com/js/"]
+intent: Quotes with author and tags from the JavaScript-rendered listing
+list:
+  container: div.quote
+pagination: { kind: next_link, selector: "li.next a", max_pages: 3 }
+fields:
+  - { name: text, extract: { css: "span.text::text" }, required: true }
+  - { name: author, extract: { css: "small.author::text" } }
+  - { name: tags, type: list, extract: { css: "a.tag::text" } }
+limits: { download_delay: 0.3, max_pages: 2 }
