@@ -7,6 +7,7 @@ import App from "./App";
 import NewPage from "./routes/NewPage";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { RouteError } from "@/components/RouteError";
 
 // Route-level code splitting: the editor (picker, preview) and run page are the heavy ones.
 const RecipesPage = lazy(() => import("./routes/RecipesPage"));
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
   {
     path: "/",
     element: <App />,
+    errorElement: <RouteError />,   // a rebuilt app must not strand a tab that was already open
     children: [
       { index: true, element: <NewPage /> },
       { path: "recipes", element: lazyEl(<RecipesPage />) },
