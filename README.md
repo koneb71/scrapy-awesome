@@ -36,6 +36,10 @@ cd ../backend && uv sync
 uv run scrapy-awesome serve                     # opens http://127.0.0.1:<port>/auth?token=… in your browser
 ```
 
+The UI signs in with a token the server prints once. If the server is already running in the
+background (`service install`, the desktop app), `uv run scrapy-awesome open` prints that link
+again and opens it — optionally at a route, e.g. `scrapy-awesome open /recipes`.
+
 ### With your Claude / Gemini subscription (MCP)
 
 ```bash

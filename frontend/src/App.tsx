@@ -130,7 +130,9 @@ export default function App() {
             <Alert variant="destructive">
               <AlertTitle>Not signed in to the local server</AlertTitle>
               <AlertDescription>
-                Open the link printed by <code>scrapy-awesome serve</code> (it contains a one-time token), then reload.
+                This page needs the sign-in link, which carries the local server's token. Run{" "}
+                <code>scrapy-awesome open</code> in a terminal — it prints the link for the server
+                already running and opens it here.
               </AlertDescription>
             </Alert>
           </div>

@@ -141,6 +141,35 @@ def serve(
     )
 
 
+@app.command("open")
+def open_ui(
+    route: Annotated[str, typer.Argument(help="Where to land, e.g. /recipes")] = "/",
+    no_open: Annotated[
+        bool, typer.Option("--no-open", help="Print the link, don't open it")
+    ] = False,
+) -> None:
+    """Open the UI of the server that is already running (mints a fresh sign-in link).
+
+    `serve` prints a sign-in link once, on the terminal it was started from — which is no help
+    when the server runs in the background (`service install`, the desktop app, `nohup`). This
+    reads server.json, checks the server is actually answering, and hands you the link again.
+    """
+    import webbrowser
+
+    from scrapy_awesome.config import get_paths
+    from scrapy_awesome.tools.client import running_server
+
+    info = running_server(get_paths())
+    if not info:
+        console.print("[red]No server is running.[/red] Start one with: scrapy-awesome serve")
+        raise typer.Exit(code=1)
+    target = route if route.startswith("/") else f"/{route}"
+    url = f"{info['url']}/auth?token={info['token']}&next={target}"
+    typer.echo(url)  # plain: a wrapped or marked-up URL is not copy-pasteable
+    if not no_open:
+        webbrowser.open(url)
+
+
 @app.command()
 def mcp() -> None:
     """Start the stdio MCP server (for Claude Code / Claude Desktop / Gemini CLI).
