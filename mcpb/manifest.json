@@ -7,10 +7,10 @@
   "long_description": "Local-first web scraper on Scrapy (stealth HTTP/Chrome + Playwright). Claude Desktop drives the app's tools through this MCP server: fetch a page, test selectors, save + validate a recipe, run, watch results in the app, export. Human-in-the-loop element picker (request_pick). Requires the scrapy-awesome desktop app (or a `scrapy-awesome` install) \u2014 set the binary path below.",
   "author": {
     "name": "scrapy-awesome contributors",
-    "url": "https://github.com/neiellcare/scrapy-awesome"
+    "url": "https://github.com/koneb71/scrapy-awesome"
   },
-  "homepage": "https://github.com/neiellcare/scrapy-awesome",
-  "documentation": "https://github.com/neiellcare/scrapy-awesome/blob/main/plugin/README.md",
+  "homepage": "https://github.com/koneb71/scrapy-awesome",
+  "documentation": "https://github.com/koneb71/scrapy-awesome/blob/main/plugin/README.md",
   "license": "MIT",
   "keywords": [
     "scraping",

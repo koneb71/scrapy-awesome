@@ -80,8 +80,8 @@ freeze = [
 scrapy-awesome = "scrapy_awesome.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/neiellcare/scrapy-awesome"
-Issues = "https://github.com/neiellcare/scrapy-awesome/issues"
+Homepage = "https://github.com/koneb71/scrapy-awesome"
+Issues = "https://github.com/koneb71/scrapy-awesome/issues"
 
 [build-system]
 requires = ["hatchling"]

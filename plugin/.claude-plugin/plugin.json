@@ -4,10 +4,10 @@
   "description": "Scrape any site with your Claude subscription: /scrape <url> — builds a recipe (fields + selectors, pagination, detail pages) in the local scrapy-awesome app, validates it on cached sample pages, runs the crawl and exports CSV/JSON/XLSX. Local-first, deterministic crawls, human-in-the-loop element picker.",
   "author": {
     "name": "scrapy-awesome contributors",
-    "url": "https://github.com/neiellcare/scrapy-awesome"
+    "url": "https://github.com/koneb71/scrapy-awesome"
   },
-  "homepage": "https://github.com/neiellcare/scrapy-awesome",
-  "repository": "https://github.com/neiellcare/scrapy-awesome",
+  "homepage": "https://github.com/koneb71/scrapy-awesome",
+  "repository": "https://github.com/koneb71/scrapy-awesome",
   "license": "MIT",
   "keywords": ["scraping", "scrapy", "web-scraper", "mcp", "crawler", "csv", "excel"],
   "mcpServers": "./.mcp.json",
