@@ -63,9 +63,9 @@ def _balanced_json(text: str, start: int) -> str | None:
 
 def extract_json_blobs(html: str, *, max_blob_bytes: int = 5_000_000) -> dict[str, Any]:
     blobs: dict[str, Any] = {}
-    if not html:
-        return blobs
-    sel = Selector(text=html)
+    if not html or html.lstrip()[:1] in "{[":
+        return blobs  # empty, or a JSON document rather than markup (parsel would refuse xpath)
+    sel = Selector(text=html, type="html")
 
     for node in sel.xpath('//script[@type="application/json"]'):
         sid = node.xpath("@id").get()

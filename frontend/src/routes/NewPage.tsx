@@ -37,12 +37,29 @@ export default function NewPage() {
       const s = samples[0];
       if (s.analysis) recipe = applyAnalysis(recipe, s.analysis);
       recipe.name = s.title || recipe.name;
-      // 3) save the analyzed recipe
-      const row = await api.updateRecipe(draft.id, recipe, "analyzed");
-      return { row, sample: s };
+      // 3) if the site publishes a confirmed JSON API (Shopify & co), read that instead — the
+      //    CSS selectors we just derived stay on as fallbacks.
+      let usedApi: string | null = null;
+      const platform = s.analysis?.platform;
+      if (platform?.api) {
+        try {
+          const sw = await api.useApi(s.id, recipe, "product");
+          recipe = sw.recipe;
+          const collection = new URL(sw.endpoint).pathname.match(/\/collections\/([^/]+)\//)?.[1];
+          usedApi = collection
+            ? `${platform.label} API — reading the ${collection} collection as JSON instead of the page`
+            : `${platform.label} API — reading the catalogue as JSON instead of the page`;
+        } catch {
+          /* stay on the HTML recipe */
+        }
+      }
+      const row = await api.updateRecipe(draft.id, recipe, usedApi ? "analyzed + API" : "analyzed");
+      return { row, sample: s, usedApi };
     },
-    onSuccess: ({ row, sample }) => {
-      toast.success(`Analyzed ${sample.final_url} via ${sample.tier} tier`);
+    onSuccess: ({ row, sample, usedApi }) => {
+      toast.success(
+        usedApi ? `${usedApi}` : `Analyzed ${sample.final_url} via ${sample.tier} tier`,
+      );
       const prompt = designOn
         ? intent.trim()
           ? `Build the recipe for this page. What I want: ${intent.trim()}. Confirm the selectors on the cached page, save the recipe, validate it, and tell me the fill rates.`

@@ -41,6 +41,7 @@ fields:
     type: text                           # text|number|price|date|url|image|bool|enum|list|json
     scope: list                          # list | detail | page
     required: true
+    sparse: false                        # true = usually empty (a sale price); empty is a note, not an error
     extract: { css: "h3 a", attr: title }
     alternates: [{ css: "h3::text" }]
     examples: ["A Light in the Attic"]

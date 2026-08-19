@@ -89,6 +89,10 @@ def extract_raw(context: Any, ext: Extractor) -> list[Any]:
         if ext.source == "json_path":
             return []  # json extractor on an html node → nothing (caller may supply blobs)
         return raw_values(context, ext)
+    if ext.source != "json_path":
+        # a CSS/XPath extractor against a JSON node (an API item, or an HTML alternate on an
+        # API-mode row): no match, so the next alternate gets its turn
+        return []
     return json_values(context, ext)
 
 

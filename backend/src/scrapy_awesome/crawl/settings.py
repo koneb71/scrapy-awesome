@@ -108,7 +108,7 @@ def build_settings(
                 "HTTPCACHE_ENABLED": True,
                 "HTTPCACHE_DIR": str(httpcache_dir),
                 "HTTPCACHE_EXPIRATION_SECS": 0,
-                "HTTPCACHE_IGNORE_HTTP_CODES": [403, 429, 503],
+                "HTTPCACHE_IGNORE_HTTP_CODES": [403, 429, 430, 503],
                 "HTTPCACHE_GZIP": True,
                 "HTTPCACHE_STORAGE": "scrapy.extensions.httpcache.FilesystemCacheStorage",
             }
@@ -117,4 +117,20 @@ def build_settings(
         del settings["PLAYWRIGHT_ABORT_REQUEST"]
     if extra:
         settings.update(extra)
+    if recipe.api is not None:
+        # API pages are far larger than HTML pages and one request replaces dozens, so be
+        # politer per request; the RFC2616 cache policy issues conditional requests, which turns
+        # a nightly re-run of an unchanged catalogue into a handful of 304s.
+        settings.update(
+            {
+                "CONCURRENT_REQUESTS_PER_DOMAIN": 1,
+                "DOWNLOAD_DELAY": max(1.0, float(settings.get("DOWNLOAD_DELAY") or 0)),
+                "RANDOMIZE_DOWNLOAD_DELAY": True,
+                "AUTOTHROTTLE_ENABLED": True,
+                "DOWNLOAD_MAXSIZE": 64 * 1024 * 1024,
+            }
+        )
+        if settings.get("HTTPCACHE_ENABLED"):
+            settings["HTTPCACHE_POLICY"] = "scrapy.extensions.httpcache.RFC2616Policy"
+
     return settings

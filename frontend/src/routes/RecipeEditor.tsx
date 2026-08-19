@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AnalysisCard } from "@/components/recipe/AnalysisCard";
+import { PlatformCard } from "@/components/recipe/PlatformCard";
 import { FieldsTab } from "@/components/recipe/FieldsTab";
 import { PreviewTab } from "@/components/recipe/PreviewTab";
 import { PlanTab } from "@/components/recipe/PlanTab";
@@ -119,7 +120,17 @@ export default function RecipeEditor() {
     if (seedSample.data && !list.some((s) => s.id === seedSample.data!.id)) return [seedSample.data, ...list];
     return list;
   }, [samplesQ.data, seedSample.data]);
-  const analysisSample = samples.find((s) => s.kind === "list" && s.analysis) ?? samples[0] ?? null;
+  // The seed page is what "analyze" is about. An API recipe's preview fetches JSON pages into the
+  // same cache, and analyzing one of those as HTML says "single page, no containers".
+  const seedUrl = recipe?.seeds?.[0];
+  const apiPrefix = recipe?.api?.url_template?.split("{")[0] ?? null;
+  const isApiPage = (s: Sample) => !!apiPrefix && (s.url.startsWith(apiPrefix) || s.final_url?.startsWith(apiPrefix));
+  const pageSamples = samples.filter((s) => !isApiPage(s));
+  const analysisSample =
+    pageSamples.find((s) => s.analysis && (s.url === seedUrl || s.final_url === seedUrl)) ??
+    pageSamples.find((s) => s.kind === "list" && s.analysis) ??
+    pageSamples[0] ??
+    null;
 
   const change = (r: Recipe) => {
     setRecipe(r);
@@ -147,6 +158,12 @@ export default function RecipeEditor() {
       setTab("preview");
     },
     onError: (e: Error) => toast.error(`Preview failed: ${e.message}`),
+  });
+  const snapshotSeed = useMutation({
+    // The seed *page*, not the API endpoint the recipe reads — this is what "analyze" looks at.
+    mutationFn: async () => api.snapshot({ urls: [recipe!.seeds[0]], recipe_id: id, kind: "list" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["samples", id] }),
+    onError: (e: Error) => toast.error(`Snapshot failed: ${e.message}`),
   });
   const revalidate = useMutation({
     mutationFn: async () => api.preview(recipe!, samples.map((s) => s.id)),
@@ -227,11 +244,48 @@ export default function RecipeEditor() {
               <Button size="sm" variant="secondary" onClick={() => api.analyzePage(analysisSample.id).then(() => qc.invalidateQueries({ queryKey: ["samples", id] }))}>Analyze cached page</Button>
             </div>
           ) : analysisSample ? (
-            <AnalysisCard sample={analysisSample} recipe={recipe} onChange={change} />
+            <div className="space-y-4">
+              <PlatformCard
+                sample={analysisSample}
+                recipe={recipe}
+                usingApi={!!recipe.api}
+                onUseApi={(r, endpoint) => {
+                  change(r);
+                  setReport(null);
+                  toast.success(`Reading ${endpoint} — press Preview to validate`);
+                  setTab("preview");
+                }}
+                onUseHtml={() => {
+                  const { api: _drop, ...rest } = recipe as Recipe & { api?: unknown };
+                  const container = recipe.list?.alternates?.[0];
+                  change({
+                    ...(rest as Recipe),
+                    api: null,
+                    list: container ? { ...recipe.list!, container, alternates: (recipe.list?.alternates ?? []).slice(1) } : recipe.list,
+                  });
+                  toast.info("Back to scraping the page");
+                }}
+              />
+              <AnalysisCard sample={analysisSample} recipe={recipe} onChange={change} />
+            </div>
           ) : (
-            <div className="text-sm text-muted-foreground">
-              No cached page yet.{" "}
-              <Button size="sm" variant="secondary" onClick={() => fetchSamples.mutate()} disabled={fetchSamples.isPending}>Fetch the seed page</Button>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {recipe.api && (
+                <p>
+                  This recipe reads <span className="font-mono text-xs">{recipe.api.url_template}</span>
+                  {recipe.api.note ? ` — ${recipe.api.note}` : ""}. Snapshot the page behind it to
+                  analyze the HTML (and to re-check the platform).
+                </p>
+              )}
+              {!recipe.api && "No cached page yet. "}
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => snapshotSeed.mutate()}
+                disabled={snapshotSeed.isPending}
+              >
+                {snapshotSeed.isPending ? "Fetching…" : "Fetch the seed page"}
+              </Button>
             </div>
           )}
         </TabsContent>

@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-BLOCK_CODES = frozenset({403, 429, 503})
+BLOCK_CODES = frozenset({403, 429, 430, 503})  # 430: Shopify Security Rejection
 
 # Specific challenge markers (avoid bare vendor names — real product pages embed those in scripts).
 CHALLENGE_MARKERS: tuple[str, ...] = (

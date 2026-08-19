@@ -143,6 +143,12 @@ export function FieldsTab({
                   <TableHead className="w-24">Attr</TableHead>
                   <TableHead className="w-32">Regex</TableHead>
                   <TableHead className="w-16">Req.</TableHead>
+                  <TableHead className="w-16">
+                    <Tooltip>
+                      <TooltipTrigger asChild><span>Sparse</span></TooltipTrigger>
+                      <TooltipContent>Usually empty (a sale price) — an empty column is a note, not an error</TooltipContent>
+                    </Tooltip>
+                  </TableHead>
                   <TableHead className="w-44">Examples / fill</TableHead>
                   <TableHead className="w-24" />
                 </TableRow>
@@ -190,6 +196,7 @@ export function FieldsTab({
                       <TableCell><Input value={f.extract.attr ?? ""} onChange={(e) => update(i, { extract: { ...f.extract, attr: e.target.value || null } })} className="h-8 font-mono text-xs" placeholder="href" /></TableCell>
                       <TableCell><Input value={f.extract.regex ?? ""} onChange={(e) => update(i, { extract: { ...f.extract, regex: e.target.value || null } })} className="h-8 font-mono text-xs" placeholder="(\d+)" /></TableCell>
                       <TableCell><Switch checked={!!f.required} onCheckedChange={(v) => update(i, { required: v })} /></TableCell>
+                      <TableCell><Switch checked={!!f.sparse} onCheckedChange={(v) => update(i, { sparse: v })} /></TableCell>
                       <TableCell className="text-xs">
                         {st ? (
                           <div>

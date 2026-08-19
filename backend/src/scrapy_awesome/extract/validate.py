@@ -16,9 +16,10 @@ from scrapy_awesome.extract.engine import (
     ExtractedItem,
     extract_list_items,
     extract_page_fields,
+    item_url,
     next_page_url,
 )
-from scrapy_awesome.recipe.models import Extractor, Recipe
+from scrapy_awesome.recipe.models import Extractor, Field, Recipe
 
 Level = Literal["error", "warn", "info"]
 _POSITIONAL = re.compile(r":nth-(child|of-type|last-child)|:first-child|:last-child|\[\d+\]")
@@ -110,6 +111,12 @@ def _record(fs: FieldStats, item: ExtractedItem, name: str) -> None:
     fs.provenance[p] = fs.provenance.get(p, 0) + 1
 
 
+def _html_only(f: Field) -> bool:
+    """True when every extractor of a field reads HTML (unusable on a JSON body)."""
+    exts = [f.extract, *f.alternates]
+    return bool(exts) and all(e.source in ("css", "xpath") for e in exts)
+
+
 def validate_on_samples(
     recipe: Recipe, samples: list[Sample], *, max_rows: int = 50
 ) -> ValidationReport:
@@ -131,12 +138,16 @@ def validate_on_samples(
     values_by_field: dict[str, list[Any]] = {f.name: [] for f in recipe.fields}
     detail_links: list[str] = []
     all_items: list[ExtractedItem] = []
+    item_urls: dict[int, str] = {}
 
-    for s in list_samples:
+    for n, s in enumerate(list_samples):
         items, which = extract_list_items(recipe, s.html, s.url, json_blobs=s.json_blobs)
         rep.containers.append({"url": s.url, "matched": len(items), "provenance": which})
         if recipe.page_type == "list":
-            if not items or which == "missing":
+            if not items and recipe.api is not None and n > 0:
+                # an empty page past the first is how a JSON API says "end of results"
+                rep.add("info", "api_last_page", f"no more results after {list_samples[0].url}")
+            elif not items or which == "missing":
                 rep.add("error", "container_missing", f"list.container matched nothing on {s.url}")
             elif recipe.list_ and len(items) < recipe.list_.min_items:
                 rep.add(
@@ -146,6 +157,7 @@ def validate_on_samples(
                 )
         for it in items:
             all_items.append(it)
+            item_urls[id(it)] = item_url(recipe, it, s.url)
             for f in recipe.list_fields:
                 _record(rep.fields[f.name], it, f.name)
                 values_by_field[f.name].append(it.values.get(f.name))
@@ -164,7 +176,9 @@ def validate_on_samples(
 
     # rows preview (list items)
     for it in all_items[:max_rows]:
-        rep.rows.insert(len(rep.rows) - len(detail_samples), {"_url": it.detail_url, **it.values})
+        rep.rows.insert(
+            len(rep.rows) - len(detail_samples), {"_url": item_urls[id(it)], **it.values}
+        )
 
     # ---- field-level issues -------------------------------------------------------------
     for f in recipe.fields:
@@ -193,9 +207,20 @@ def validate_on_samples(
                 f"required field {f.name!r} filled {fs.fill_rate:.0%}",
                 f.name,
             )
+        elif fs.fill_rate == 0 and f.sparse:
+            rep.add(
+                "info", "sparse_empty", f"field {f.name!r} is empty on every sample row", f.name
+            )
+        elif fs.fill_rate == 0 and recipe.api is not None and _html_only(f):
+            rep.add(
+                "info",
+                "fallback_only_field",
+                f"field {f.name!r} reads the page, not the API — it only fills if the API is unavailable",
+                f.name,
+            )
         elif fs.fill_rate == 0:
             rep.add("error", "empty_field", f"field {f.name!r} extracted nothing", f.name)
-        elif fs.fill_rate < 0.5:
+        elif fs.fill_rate < 0.5 and not f.sparse:
             rep.add("warn", "low_fill", f"field {f.name!r} filled only {fs.fill_rate:.0%}", f.name)
         if fs.n_total >= 5 and fs.distinct == 1 and f.scope == "list":
             rep.add(
@@ -232,9 +257,10 @@ def validate_on_samples(
         rep.pagination["found_on_first"] = bool(rep.pagination["next_urls"][0]["next"])
         if not found:
             rep.add(
-                "warn",
+                "info" if recipe.api is not None else "warn",
                 "next_link_missing",
-                "pagination.selector found no next link on the sample pages",
+                "pagination.selector found no next link on the sample pages"
+                + (" (paging comes from the API instead)" if recipe.api is not None else ""),
             )
     if recipe.detail.enabled and all_items:
         ratio = len(detail_links) / len(all_items)

@@ -10,6 +10,7 @@ Usage (manual):
 
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
@@ -17,7 +18,7 @@ from contextlib import closing
 
 import uvicorn
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 
 from tests.fixtures import sites
 
@@ -109,6 +110,149 @@ def build_app() -> FastAPI:
         if request.cookies.get("session") != "ok":
             return RedirectResponse(url="/login/", status_code=302)
         return HTMLResponse(sites.detail_page(item_id, "/login/private"))
+
+    # ---- fake Shopify store (+ a variant with the JSON API disabled) -------------------
+    def _shop_headers() -> dict[str, str]:
+        # What a real store sends in Aug 2026: X-ShopId / X-Shopify-Stage are gone; powered-by,
+        # server-timing and the _shopify_* cookies are what a detector can actually rely on.
+        return {
+            "powered-by": "Shopify",
+            "server-timing": 'cfRequestDuration;dur=12, theme;desc="987654321", pageType;desc="collection"',
+            "shopify-complexity-score": "12",
+            "set-cookie": "_shopify_y=8f3c1b2e-fixture; path=/; SameSite=Lax",
+            "x-dc": "gcp-europe-west1,gcp-europe-west4",
+        }
+
+    def _json(
+        payload: object, *, headers: dict[str, str] | None = None, status: int = 200
+    ) -> Response:
+        return Response(
+            json.dumps(payload),
+            status_code=status,
+            media_type="application/json; charset=utf-8",
+            headers=headers,
+        )
+
+    for prefix in ("/shop", "/shop-locked", "/shop-blocked"):
+        locked = prefix == "/shop-locked"
+
+        # JSON endpoints first: `/products/<handle>.json` must win over the HTML `/products/<handle>`
+        @app.get(f"{prefix}/products.json")
+        def shop_products_json(limit: int = 30, page: int = 1, _locked: bool = locked) -> Response:
+            if _locked:  # some stores turn the endpoint off — it 404s with an HTML page
+                return HTMLResponse(
+                    "<h1>404 Not Found</h1>", status_code=404, headers=_shop_headers()
+                )
+            return _json(sites.shopify_products_json(page, limit), headers=_shop_headers())
+
+        @app.get(f"{prefix}/collections/{{collection}}/products.json")
+        def shop_collection_products_json(
+            collection: str, limit: int = 30, page: int = 1, _locked: bool = locked
+        ) -> Response:
+            if _locked:
+                return HTMLResponse(
+                    "<h1>404 Not Found</h1>", status_code=404, headers=_shop_headers()
+                )
+            return _json(
+                sites.shopify_products_json(page, limit, collection), headers=_shop_headers()
+            )
+
+        @app.get(f"{prefix}/products/{{handle}}.json")
+        def shop_product_json(handle: str, _locked: bool = locked) -> Response:
+            if _locked:
+                return HTMLResponse(
+                    "<h1>404 Not Found</h1>", status_code=404, headers=_shop_headers()
+                )
+            data = sites.shopify_product_json(handle)
+            if data is None:
+                return _json({"errors": "Not Found"}, status=404)
+            return _json(data, headers=_shop_headers())
+
+        @app.get(f"{prefix}/meta.json")
+        def shop_meta_json(_locked: bool = locked) -> Response:
+            if _locked:
+                return HTMLResponse(
+                    "<h1>404 Not Found</h1>", status_code=404, headers=_shop_headers()
+                )
+            return _json(
+                {
+                    "id": sites.SHOP_ID,
+                    "name": "Fixture Shop",
+                    "city": "London",
+                    "country": "GB",
+                    "currency": "GBP",
+                    "domain": sites.SHOP_DOMAIN,
+                    "money_format": "£{{amount}}",
+                },
+                headers=_shop_headers(),
+            )
+
+        @app.get(f"{prefix}/cart.js")
+        def shop_cart_js(_locked: bool = locked) -> Response:
+            return _json(sites.shopify_cart_js(), headers=_shop_headers())
+
+        # storefront HTML
+        @app.get(f"{prefix}/", response_class=HTMLResponse)
+        def shop_index(page: int = 1, _p: str = prefix) -> Response:
+            return HTMLResponse(sites.shopify_page(page, _p), headers=_shop_headers())
+
+        @app.get(f"{prefix}/collections/{{collection}}", response_class=HTMLResponse)
+        def shop_collection(collection: str, page: int = 1, _p: str = prefix) -> Response:
+            return HTMLResponse(sites.shopify_page(page, _p, collection), headers=_shop_headers())
+
+        @app.get(f"{prefix}/products/{{handle}}", response_class=HTMLResponse)
+        def shop_product_page(handle: str, _p: str = prefix) -> Response:
+            html = sites.shopify_product_page(handle, _p)
+            if html is None:
+                return HTMLResponse("<h1>Not found</h1>", status_code=404)
+            return HTMLResponse(html, headers=_shop_headers())
+
+    # ---- fake WordPress site (core REST API) --------------------------------------------
+    @app.get("/wp/", response_class=HTMLResponse)
+    def wp_index() -> str:
+        return sites.wp_page("/wp")
+
+    @app.get("/wp/wp-json/")
+    def wp_root() -> Response:
+        return _json(
+            {
+                "name": "Fixture Blog",
+                "description": "posts about widgets",
+                "url": "/wp",
+                "namespaces": ["wp/v2", "wp-site-health/v1"],
+                "routes": {"/wp/v2/posts": {"methods": ["GET"]}},
+            }
+        )
+
+    @app.get("/wp/wp-json/wp/v2/posts")
+    def wp_posts(page: int = 1, per_page: int = sites.WP_POSTS_PER_PAGE) -> Response:
+        posts, total, pages = sites.wp_posts(page, per_page)
+        if page > pages:  # WP answers 400 rest_post_invalid_page_number past the end
+            return _json(
+                {
+                    "code": "rest_post_invalid_page_number",
+                    "message": "The page number requested is larger than the number of pages available.",
+                    "data": {"status": 400},
+                },
+                status=400,
+                headers={"x-wp-total": str(total), "x-wp-totalpages": str(pages)},
+            )
+        return _json(posts, headers={"x-wp-total": str(total), "x-wp-totalpages": str(pages)})
+
+    @app.get("/robots.txt", response_class=PlainTextResponse)
+    def robots() -> str:
+        # Modelled on Shopify's own template (the /shop-blocked/ group is the one the fallback
+        # test relies on: robots may forbid the API while allowing the page).
+        return """User-agent: *
+Disallow: /admin
+Disallow: /cart
+Disallow: /checkouts/
+Disallow: /*/checkouts
+Disallow: /recommendations/products
+Disallow: /shop-blocked/products.json
+Disallow: /shop/collections/private/products
+Sitemap: /sitemap.xml
+"""
 
     @app.get("/health")
     def health() -> dict:

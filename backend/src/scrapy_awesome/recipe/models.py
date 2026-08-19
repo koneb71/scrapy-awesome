@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic import Field as PField
 
 RECIPE_VERSION = 1
+JSON_PREFIX = "json:"  # container/field prefix for JSON documents: "json:<blob>.<path>"
 
 Tier = Literal["auto", "http", "browser", "interactive"]
 FieldType = Literal[
@@ -66,6 +67,7 @@ class Extractor(StrictModel):
     llm: str | None = None
     attr: str | None = None
     regex: str | None = None
+    template: str | None = None  # post-process: "https://x/products/{value}" (APIs often omit URLs)
     all: bool = False
 
     @model_validator(mode="after")
@@ -80,6 +82,8 @@ class Extractor(StrictModel):
                 re.compile(self.regex)
             except re.error as exc:  # pragma: no cover - message matters, not path
                 raise ValueError(f"invalid regex {self.regex!r}: {exc}") from exc
+        if self.template is not None and "{value}" not in self.template:
+            raise ValueError("extractor template must contain the {value} placeholder")
         return self
 
     @property
@@ -113,6 +117,7 @@ class Field(StrictModel):
     type: FieldType = "text"
     description: str = ""
     required: bool = False
+    sparse: bool = False  # empty on most rows by nature (a sale price, a subtitle) — not a fault
     scope: Scope = "list"
     extract: Extractor
     alternates: list[Extractor] = PField(default_factory=list)
@@ -247,6 +252,79 @@ class Pagination(StrictModel):
         return self
 
 
+class ApiPaging(StrictModel):
+    """How to walk an API's pages.
+
+    `page`   — substitute {page} (and {limit}); stop on an empty item list (Shopify, WP REST).
+    `cursor` — substitute {cursor}; read the next one from `cursor_path` (Storefront GraphQL).
+    `none`   — a single request.
+    """
+
+    kind: Literal["none", "page", "cursor"] = "page"
+    start: int = 1
+    step: int = 1
+    page_size: int | None = None  # fills {limit}; also converts limits.max_items into a page budget
+    cursor_path: str | None = None  # cursor: json path to the next cursor
+    has_more_path: str | None = None  # cursor: json path to a bool; falsy stops the walk
+    stop_on_empty: bool = True
+
+    @model_validator(mode="after")
+    def _kind_args(self) -> ApiPaging:
+        if self.kind == "cursor" and not self.cursor_path:
+            raise ValueError("api paging 'cursor' requires cursor_path")
+        if self.page_size is not None and self.page_size < 1:
+            raise ValueError("page_size must be >= 1")
+        return self
+
+
+class ApiConfig(StrictModel):
+    """Read rows from a JSON endpoint instead of parsing the page.
+
+    The response body becomes the JSON document, so `list.container` is a `json:body.<path>`
+    container and fields use `json_path` — the same extraction, validation and preview code as
+    HTML recipes. `seeds` stays the human-facing URL and remains the fallback when the endpoint
+    fails (`on_error: html`).
+    """
+
+    url_template: str  # "https://shop.example/products.json?limit={limit}&page={page}"
+    method: Literal["GET", "POST"] = "GET"
+    body_template: str | None = None  # POST body (GraphQL query), same placeholders
+    headers: dict[str, str] = PField(default_factory=dict)
+    paging: ApiPaging = PField(default_factory=ApiPaging)
+    explode: str | None = None  # json path inside an item -> one row per child (e.g. "variants")
+    on_error: Literal["html", "stop"] = "html"  # endpoint dead mid-run -> fall back / give up
+    platform: str | None = None  # provenance: "shopify", "woocommerce", ...
+    note: str = ""  # human explanation shown in the UI ("2,995 products in 12 requests")
+
+    @model_validator(mode="after")
+    def _placeholders(self) -> ApiConfig:
+        if not re.match(r"^https?://", self.url_template):
+            raise ValueError("api.url_template must be an http(s) URL")
+        target = f"{self.url_template} {self.body_template or ''}"
+        need = {"page": "{page}", "cursor": "{cursor}"}.get(self.paging.kind)
+        if need and need not in target:
+            raise ValueError(
+                f"api paging {self.paging.kind!r} needs {need} in the url/body template"
+            )
+        if self.method == "GET" and self.body_template:
+            raise ValueError("body_template requires method POST")
+        return self
+
+    def render(
+        self, *, page: int | None = None, cursor: str | None = None
+    ) -> tuple[str, str | None]:
+        """(url, body) for one request."""
+
+        def fill(t: str) -> str:
+            return (
+                t.replace("{page}", str(page if page is not None else self.paging.start))
+                .replace("{limit}", str(self.paging.page_size or 250))
+                .replace("{cursor}", "" if cursor is None else str(cursor))
+            )
+
+        return fill(self.url_template), (fill(self.body_template) if self.body_template else None)
+
+
 class Limits(StrictModel):
     max_pages: int = 20
     max_items: int = 1000
@@ -275,6 +353,7 @@ class Recipe(StrictModel):
     list_: ListConfig | None = PField(default=None, alias="list")  # `list` shadows the builtin
     detail: DetailConfig = PField(default_factory=DetailConfig)
     pagination: Pagination = PField(default_factory=Pagination)
+    api: ApiConfig | None = None  # set -> rows come from a JSON endpoint, not the HTML
     fields: list[Field] = PField(default_factory=list)  # may be empty while drafting
     dedupe_key: list[str] = PField(default_factory=lambda: ["_url"])
     limits: Limits = PField(default_factory=Limits)
@@ -317,6 +396,12 @@ class Recipe(StrictModel):
             errs.append("add at least one field")
         if self.page_type == "list" and not (self.list_ and self.list_.container.strip()):
             errs.append("list pages need an item container selector")
+        if self.api and self.page_type == "list":
+            container = (self.list_.container if self.list_ else "") or ""
+            if not container.startswith(JSON_PREFIX):
+                errs.append(
+                    "api recipes need a json container, e.g. list.container = 'json:body.products[*]'"
+                )
         for f in self.fields:
             if f.extract.source in ("css", "xpath") and not (f.extract.selector or "").strip():
                 errs.append(f"field {f.name!r} has an empty selector")
@@ -355,7 +440,10 @@ class Recipe(StrictModel):
         from urllib.parse import urlsplit
 
         out: list[str] = []
-        for s in self.seeds:
+        urls = [*self.seeds]
+        if self.api:
+            urls.append(self.api.url_template)
+        for s in urls:
             host = urlsplit(s).hostname or ""
             if host and host not in out:
                 out.append(host)

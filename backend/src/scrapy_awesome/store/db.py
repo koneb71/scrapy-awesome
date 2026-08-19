@@ -503,6 +503,22 @@ class Store:
                 s.expunge(row)
             return row
 
+    # ------------------------------------------------------------------ notes (key/value)
+    def get_note(self, key: str) -> str | None:
+        with self.session() as s:
+            row = s.get(NoteRow, key)
+            return row.value if row else None
+
+    def set_note(self, key: str, value: str) -> None:
+        with self._write_lock, self.session() as s:
+            row = s.get(NoteRow, key)
+            if row is None:
+                s.add(NoteRow(key=key, value=value))
+            else:
+                row.value = value
+                s.add(row)
+            s.commit()
+
     # ------------------------------------------------------------------ failed pages
     def add_failed_page(self, row: FailedPageRow) -> FailedPageRow:
         with self._write_lock, self.session() as s:

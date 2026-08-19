@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
@@ -18,9 +19,12 @@ from scrapy import Request
 from scrapy.http import Response
 
 from scrapy_awesome.crawl.events import Emitter, make_sink
+from scrapy_awesome.extract import jsonpath
 from scrapy_awesome.extract.engine import (
+    api_blobs,
     extract_list_items,
     extract_page_fields,
+    item_url,
     next_page_url,
     select_containers,
 )
@@ -180,6 +184,14 @@ class RecipeSpider(_BaseSpider):
         self._heal_tried: set[str] = set()  # field names we already tried to relocate
         self._failed_saved = 0
         self.max_failed_pages = 50
+        self._api_fell_back = False
+        # A page of 250 is politer than 12 pages of 20 — but "give me 100 rows" must not walk a
+        # whole catalogue, so max_items becomes a page budget.
+        self.api_max_pages = self.max_pages
+        api = self.recipe.api
+        if api and api.paging.page_size and self.max_items:
+            budget = -(-self.max_items // api.paging.page_size)  # ceil
+            self.api_max_pages = max(1, min(self.max_pages, budget))
 
     # ---- self-heal ------------------------------------------------------------------------
     HEAL_MIN_ITEMS = 3
@@ -206,7 +218,7 @@ class RecipeSpider(_BaseSpider):
             return None
         from parsel import Selector
 
-        sel = Selector(text=html, base_url=url)
+        sel = Selector(text=html, base_url=url, type="html")
         nodes, _ = select_containers(
             sel, self.recipe.list_.container, self.recipe.list_.alternates, blobs
         )
@@ -273,6 +285,11 @@ class RecipeSpider(_BaseSpider):
             max_items=self.max_items,
             tier=self.tier_override or self.recipe.fetch.tier,
         )
+        if self.recipe.api:
+            req = self._api_request(page=self.recipe.api.paging.start, page_no=1)
+            if req:
+                yield req
+            return
         for seed in self.recipe.seeds:
             req = self._list_request(seed, page_no=1, seed=seed)
             if req:
@@ -292,6 +309,195 @@ class RecipeSpider(_BaseSpider):
             cb_kwargs={"page_no": page_no, "seed": seed},
             dont_filter=True,
         )
+
+    # ---- shared row plumbing ---------------------------------------------------------------
+    def _row(self, it: Any, response: Response, tier: str | None) -> dict[str, Any]:
+        assert self.recipe is not None
+        row: dict[str, Any] = dict(it.values)
+        row["_url"] = item_url(self.recipe, it, response.url)
+        row["_page_url"] = response.url
+        row["_fetched_at"] = _now()
+        row["_tier"] = tier
+        row["_provenance"] = it.provenance
+        return row
+
+    def _detail_request(self, url: str, row: dict[str, Any]) -> Request | None:
+        assert self.recipe is not None
+        if self.max_detail is not None and self.detail_scheduled >= self.max_detail:
+            return None
+        self.detail_scheduled += 1
+        dpol = self.policy(for_detail=True)
+        return Request(
+            url,
+            callback=self.parse_detail,
+            errback=self.errback,
+            meta=dpol.to_meta(dpol.initial_tier(), extra={"sa_kind": "detail"}),
+            cb_kwargs={"row": row},
+            priority=10,
+        )
+
+    # ---- API pages ------------------------------------------------------------------------
+    def _api_request(
+        self, *, page: int | None = None, cursor: str | None = None, page_no: int = 1
+    ) -> Request | None:
+        assert self.recipe is not None and self.recipe.api is not None
+        api = self.recipe.api
+        if self.pages_scheduled >= self.api_max_pages:
+            return None
+        self.pages_scheduled += 1
+        url, body = api.render(page=page, cursor=cursor)
+        pol = self.policy()
+        # A JSON endpoint must never escalate to a browser tier: Chrome would hand back the
+        # body wrapped in a JSON-viewer document. Pinning the tier also pins `policy_tier`,
+        # which is what the escalation middleware keys off.
+        if pol.tier in ("auto", "http"):
+            pol = replace(pol, tier="http")
+        meta = pol.to_meta(pol.tier, extra={"sa_kind": "api"})
+        headers = {"Accept": "application/json", **api.headers}
+        if body is not None:
+            headers.setdefault("Content-Type", "application/json")
+        return Request(
+            url,
+            method=api.method,
+            body=body,
+            headers=headers,
+            meta=meta,
+            callback=self.parse_api,
+            errback=self.errback,
+            cb_kwargs={"page_no": page_no, "page": page},
+            dont_filter=True,
+        )
+
+    def _fallback_to_html(self, why: str):
+        """The endpoint died mid-run: finish the job with the HTML selectors instead."""
+        assert self.recipe is not None
+        if self._api_fell_back or (self.recipe.api and self.recipe.api.on_error == "stop"):
+            return
+        self._api_fell_back = True
+        self.crawler.stats.inc_value("sa/api/fallback_to_html")
+        self.emit("log", level="warning", msg=f"API mode fell back to HTML selectors: {why}")
+        for seed in self.recipe.seeds:
+            req = self._list_request(seed, page_no=1, seed=seed)
+            if req:
+                yield req
+
+    def parse_api(self, response: Response, page_no: int, page: int | None):
+        assert self.recipe is not None and self.recipe.api is not None
+        api = self.recipe.api
+        sa = response.meta.get(META_KEY) or {}
+        tier = sa.get("tier")
+        ctype = (response.headers.get(b"Content-Type") or b"").decode(errors="replace").lower()
+        try:
+            doc = json.loads(response.text)
+        except (ValueError, AttributeError):
+            doc = None
+        if doc is None:
+            # Status alone lies (404/403/429 all appear as HTML app shells): branch on the body.
+            self.emit(
+                "page",
+                url=response.url,
+                status=response.status,
+                tier=tier,
+                ok=False,
+                kind="api",
+                reason="not_json",
+                detail=f"content-type {ctype or '?'}, {len(response.text or '')} chars",
+            )
+            self.crawler.stats.inc_value("sa/api/not_json")
+            yield from self._fallback_to_html(f"{response.url} returned {response.status} non-JSON")
+            return
+
+        if response.status >= 400:
+            # Platforms signal "past the last page" differently: Shopify returns an empty array,
+            # WordPress a 400 with a JSON error object. An error body is never rows.
+            self.emit(
+                "page",
+                url=response.url,
+                status=response.status,
+                tier=tier,
+                ok=False,
+                kind="api",
+                page_no=page_no,
+                reason="http_error",
+                detail=str(doc)[:200],
+            )
+            if page_no == 1:
+                yield from self._fallback_to_html(f"{response.url} returned HTTP {response.status}")
+            return
+
+        blobs = api_blobs(doc)
+        # The body is JSON, so there is no markup to parse: CSS/XPath alternates simply do not
+        # match here — they are what the HTML fallback uses.
+        items, which = extract_list_items(self.recipe, "", response.url, json_blobs=blobs)
+        self.emit(
+            "page",
+            url=response.url,
+            status=response.status,
+            tier=tier,
+            ok=True,
+            kind="api",
+            page_no=page_no,
+            items=len(items),
+            container=which,
+        )
+        if not items and page_no == 1:
+            # An empty *first* page means the container path is wrong (or the catalogue really is
+            # empty) — worth falling back. An empty *later* page is just the end of the walk.
+            self.crawler.stats.inc_value("sa/api/empty_container")
+            self._save_failed_page(response, "api", "container_missing", None)
+            yield from self._fallback_to_html(f"no items at {self.recipe.list_.container!r}")
+            return
+        if items:
+            fill = {
+                f.name: round(
+                    sum(1 for it in items if it.values.get(f.name) not in (None, "", []))
+                    / len(items),
+                    3,
+                )
+                for f in self.recipe.list_fields
+            }
+            self.emit("fill", url=response.url, page_no=page_no, rates=fill)
+
+        new_keys = 0
+        for it in items:
+            row = self._row(it, response, tier)
+            key = json.dumps([row.get(k) for k in self.recipe.dedupe_key], default=str)
+            if key not in self._seen_keys:
+                self._seen_keys.add(key)
+                new_keys += 1
+            if self.recipe.detail.enabled and it.detail_url:
+                req = self._detail_request(it.detail_url, row)
+                if req is not None:
+                    yield req
+                    continue
+            yield row
+
+        # ---- next page ----------------------------------------------------------------
+        paging = api.paging
+        if paging.kind == "none":
+            return
+        if paging.stop_on_empty and not items:
+            self.emit("log", level="info", msg=f"API returned no items on page {page_no}; done")
+            return
+        if paging.kind == "page":
+            nxt = self._api_request(
+                page=(page if page is not None else paging.start) + paging.step,
+                page_no=page_no + 1,
+            )
+        else:  # cursor
+            cursor = jsonpath.first(doc, paging.cursor_path or "")
+            has_more = (
+                bool(jsonpath.first(doc, paging.has_more_path))
+                if paging.has_more_path
+                else bool(cursor)
+            )
+            nxt = (
+                self._api_request(cursor=str(cursor), page_no=page_no + 1)
+                if has_more and cursor
+                else None
+            )
+        if nxt is not None:
+            yield nxt
 
     # ---- list pages -----------------------------------------------------------------------
     def parse_list(self, response: Response, page_no: int, seed: str):
@@ -334,30 +540,18 @@ class RecipeSpider(_BaseSpider):
 
         new_keys = 0
         for it in items:
-            row: dict[str, Any] = dict(it.values)
-            row["_url"] = it.detail_url or f"{response.url}#item-{it.index}"
-            row["_page_url"] = response.url
-            row["_fetched_at"] = _now()
-            row["_tier"] = tier
-            row["_provenance"] = it.provenance
+            row = self._row(it, response, tier)
             key = json.dumps([row.get(k) for k in self.recipe.dedupe_key], default=str)
             if key not in self._seen_keys:
                 self._seen_keys.add(key)
                 new_keys += 1
-            if self.recipe.detail.enabled and it.detail_url:
-                if self.max_detail is not None and self.detail_scheduled >= self.max_detail:
-                    yield row
-                    continue
-                self.detail_scheduled += 1
-                dpol = self.policy(for_detail=True)
-                yield Request(
-                    it.detail_url,
-                    callback=self.parse_detail,
-                    errback=self.errback,
-                    meta=dpol.to_meta(dpol.initial_tier(), extra={"sa_kind": "detail"}),
-                    cb_kwargs={"row": row},
-                    priority=10,
-                )
+            req = (
+                self._detail_request(it.detail_url, row)
+                if (self.recipe.detail.enabled and it.detail_url)
+                else None
+            )
+            if req is not None:
+                yield req
             else:
                 yield row
 
@@ -389,7 +583,17 @@ class RecipeSpider(_BaseSpider):
             yield row
             return
         html = response.text
-        blobs = extract_json_blobs(html) if self.uses_json else None
+        doc = None
+        if self.recipe.api is not None:  # API-mode detail pages return JSON documents
+            try:
+                doc = json.loads(html)
+            except (ValueError, AttributeError):
+                doc = None
+        if doc is not None:
+            blobs = api_blobs(doc)
+            html = ""
+        else:
+            blobs = extract_json_blobs(html) if self.uses_json else None
         it = extract_page_fields(self.recipe, html, response.url, scope="detail", json_blobs=blobs)
         row.update(it.values)
         row["_provenance"] = {**row.get("_provenance", {}), **it.provenance}

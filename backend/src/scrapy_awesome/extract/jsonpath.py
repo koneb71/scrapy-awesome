@@ -13,8 +13,15 @@ _TOKEN = re.compile(r"([^.\[\]]+)|\[(\*|-?\d+)\]")
 
 
 def tokenize(path: str) -> list[str | int | None]:
-    """'a.b[0].c[*]' → ['a', 'b', 0, 'c', None]  (None = wildcard)."""
+    """'a.b[0].c[*]' → ['a', 'b', 0, 'c', None]  (None = wildcard).
+
+    A leading `$` (the JSONPath root, as in `$.items[*].name`) is stripped — it addresses the
+    document itself, never a key called "$".
+    """
     out: list[str | int | None] = []
+    path = path.strip()
+    if path.startswith("$"):
+        path = path[1:].lstrip(".")
     for key, idx in _TOKEN.findall(path.strip()):
         if key:
             out.append(key)
@@ -26,7 +33,7 @@ def tokenize(path: str) -> list[str | int | None]:
 
 
 def resolve(data: Any, path: str) -> list[Any]:
-    if path in ("", "$", "."):
+    if path.strip().rstrip(".") in ("", "$", "."):
         return [data]
     nodes: list[Any] = [data]
     for tok in tokenize(path):

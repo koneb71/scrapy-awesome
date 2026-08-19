@@ -4,15 +4,17 @@ selector testing."""
 
 from __future__ import annotations
 
+import logging
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from lxml import html as lxml_html
-from parsel import Selector
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
+from scrapy_awesome.api.platform_probe import detect_for_sample, switch_to_api
+from scrapy_awesome.extract.engine import html_selector
 from scrapy_awesome.extract.selectors import raw_values, select_nodes
 from scrapy_awesome.recipe.models import Extractor, Recipe, selector_kind
 from scrapy_awesome.snapshot.analyze import analyze_html
@@ -21,6 +23,7 @@ from scrapy_awesome.snapshot.markdown import to_markdown
 from scrapy_awesome.snapshot.search import search_text
 from scrapy_awesome.store import SampleRow, Store, iso
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["pages"])
 
 
@@ -31,6 +34,7 @@ class SnapshotIn(BaseModel):
     kind: str = "list"
     tier: str | None = None
     headed: bool = False
+    detect_platform: bool = True  # auto-check for Shopify & co and confirm their JSON API
 
 
 class SelectorIn(BaseModel):
@@ -77,9 +81,18 @@ async def snapshot(request: Request, body: SnapshotIn) -> list[dict[str, Any]]:
     if not rows:
         raise HTTPException(502, "snapshot produced no pages (see snapshot-jobs/*/worker.log)")
     out = []
-    for row in rows:
+    for i, row in enumerate(rows):
         html = store.sample_html(row)
         analysis = analyze_html(html, row.final_url or row.url, blobs=row.blobs or None).to_dict()
+        # "Is this a Shopify store?" — free on the page we already have, then one confirming
+        # fetch. Only for the first list page: detail pages share the platform.
+        if body.detect_platform and i == 0 and row.kind in ("list", "page"):
+            try:
+                analysis["platform"] = await detect_for_sample(
+                    store=store, manager=manager, row=row, recipe=recipe
+                )
+            except Exception:  # detection must never break a snapshot
+                logger.exception("platform detection failed for %s", row.url)
         row = store.update_sample(row.id, analysis=analysis) or row
         out.append(sample_out(row))
     return out
@@ -230,6 +243,51 @@ def page_render(request: Request, sample_id: str) -> HTMLResponse:
     )
 
 
+class SwitchIn(BaseModel):
+    recipe: dict[str, Any]
+    granularity: Literal["product", "variant"] = "product"
+
+
+@router.post("/pages/{sample_id}/detect")
+async def detect_platform(request: Request, sample_id: str, probe: bool = True) -> dict[str, Any]:
+    """Re-run platform detection for a cached page (probing unless `probe=0`)."""
+    store, row = _get(request, sample_id)
+    block = await detect_for_sample(
+        store=store, manager=request.app.state.manager, row=row, probe=probe
+    )
+    analysis = dict(row.analysis or {})
+    analysis["platform"] = block
+    store.update_sample(sample_id, analysis=analysis)
+    return block
+
+
+@router.post("/pages/{sample_id}/use-api")
+def use_api(request: Request, sample_id: str, body: SwitchIn) -> dict[str, Any]:
+    """Rewrite a recipe to read the confirmed JSON API, keeping its HTML selectors as fallbacks."""
+    _store, row = _get(request, sample_id)
+    block = (row.analysis or {}).get("platform") or {}
+    if not block.get("api"):
+        raise HTTPException(409, block.get("reason") or "no confirmed API for this page")
+    try:
+        merged = switch_to_api(body.recipe, block, granularity=body.granularity)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    try:
+        recipe = Recipe.model_validate(merged)
+    except ValidationError as exc:
+        errors = [
+            {"loc": ".".join(str(x) for x in e["loc"]), "msg": e["msg"]} for e in exc.errors()
+        ]
+        raise HTTPException(422, {"errors": errors}) from exc
+    return {
+        "recipe": recipe.to_dict(),
+        "platform": block.get("platform"),
+        "endpoint": block["api"]["endpoint"],
+        "granularity": body.granularity,
+        "ready": recipe.ready,
+    }
+
+
 @router.post("/pages/{sample_id}/analyze")
 def page_analyze(request: Request, sample_id: str) -> dict[str, Any]:
     store, row = _get(request, sample_id)
@@ -245,7 +303,7 @@ def page_selector(request: Request, sample_id: str, body: SelectorIn) -> dict[st
     """Test a selector against a cached page: match count, first values, and outer-HTML snippets."""
     store, row = _get(request, sample_id)
     html = store.sample_html(row)
-    sel = Selector(text=html, base_url=row.final_url or row.url)
+    sel = html_selector(html, row.final_url or row.url)
     try:
         ext = (
             Extractor(xpath=body.selector, attr=body.attr, regex=body.regex)

@@ -173,11 +173,11 @@ def _matched_element(node: Selector, ext: Extractor) -> _Element | None:
 
 def compute_fingerprints(recipe: Recipe, html: str, url: str) -> dict[str, Any]:
     """Fingerprint every list-scope css/xpath field on this page (first item that fills)."""
-    from scrapy_awesome.extract.engine import select_containers
+    from scrapy_awesome.extract.engine import html_selector, select_containers
 
     if recipe.list_ is None:
         return {}
-    sel = Selector(text=html, base_url=url)
+    sel = html_selector(html, url)
     nodes, _ = select_containers(sel, recipe.list_.container, recipe.list_.alternates, None)
     out: dict[str, Any] = {}
     for f in recipe.list_fields:

@@ -8,6 +8,9 @@ fields, preview the result, run the crawl, export JSON / CSV / Excel — everyth
   `http → browser → interactive`.
 - **Claude and Gemini are optional accelerators.** They help *design* a recipe (fields, selectors,
   pagination) against cached sample pages; the crawl itself is deterministic and costs zero tokens.
+- **Uses the site's own API when there is one.** Paste a Shopify (or WooCommerce/WordPress) URL and
+  the platform is detected and its public JSON endpoint confirmed automatically — complete fields in
+  a handful of requests, with the CSS selectors kept as fallbacks. See `docs/api-mode.md`.
 - **Recipes are plain data** (JSON/YAML) — hand-editable, versioned, shareable.
 - Works with your **Claude Code / Claude Desktop / Gemini CLI** through an MCP server (subscription
   users), or with an **API key** inside the app.
@@ -23,7 +26,7 @@ fields, preview the result, run the crawl, export JSON / CSV / Excel — everyth
 > hand-off for pages selectors can't read, **AI fields**, a **Tauri desktop shell** (`desktop/`),
 > recipe versions, standalone **Scrapy project export**, a Claude Desktop **MCPB** manifest and the
 > opt-in "use my Claude Code login" toggle. See `docs/` (`robustness.md`, `providers.md`,
-> `auth-modes.md`, `recipe-format.md`, `event-protocol.md`).
+> `auth-modes.md`, `api-mode.md`, `recipe-format.md`, `event-protocol.md`).
 
 ## Quick start (web mode)
 

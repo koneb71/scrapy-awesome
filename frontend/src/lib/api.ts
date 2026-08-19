@@ -5,6 +5,7 @@ import type {
   DiffSummary,
   FailedPage,
   ModelList,
+  PlatformBlock,
   Schedule,
   ScheduleIn,
   PickRequest,
@@ -114,6 +115,12 @@ export const api = {
   pages: (recipeId?: string) => get<Sample[]>(`/api/pages${recipeId ? `?recipe_id=${recipeId}` : ""}`),
   page: (id: string) => get<Sample>(`/api/pages/${id}`),
   analyzePage: (id: string) => post<Analysis>(`/api/pages/${id}/analyze`),
+  detectPlatform: (id: string, probe = true) => post<PlatformBlock>(`/api/pages/${id}/detect?probe=${probe ? 1 : 0}`),
+  useApi: (id: string, recipe: Recipe, granularity: "product" | "variant" = "product") =>
+    post<{ recipe: Recipe; platform: string; endpoint: string; granularity: string; ready: boolean }>(
+      `/api/pages/${id}/use-api`,
+      { recipe, granularity },
+    ),
   renderUrl: (id: string) => `/api/pages/${id}/render`,
   testSelector: (id: string, body: { selector: string; attr?: string | null; regex?: string | null; container?: string | null }) =>
     post<{ matches?: number; values: unknown[]; snippets?: string[]; container_matches?: number; filled?: number; fill_rate?: number }>(

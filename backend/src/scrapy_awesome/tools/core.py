@@ -24,6 +24,26 @@ from scrapy_awesome.tools.client import ServerClient, ToolError
 FINISHED = {"finished", "stopped", "failed", "cancelled"}
 
 
+def _platform_summary(p: dict[str, Any] | None) -> dict[str, Any] | None:
+    """What an agent needs: did we recognise the platform, and is there an API to read?"""
+    if not p or not p.get("detected"):
+        return None
+    api = p.get("api")
+    return {
+        "platform": p.get("platform"),
+        "label": p.get("label"),
+        "api_available": bool(api),
+        "endpoint": (api or {}).get("endpoint"),
+        "currency": (api or {}).get("currency"),
+        "why_not": None if api else p.get("reason"),
+        "hint": (
+            "call use_platform_api(page_id, recipe_id) to read this endpoint instead of the HTML"
+            if api
+            else None
+        ),
+    }
+
+
 def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
     """Trim the heuristic analysis to what an agent needs to decide next."""
     if not a:
@@ -46,6 +66,7 @@ def _analysis_summary(a: dict[str, Any] | None) -> dict[str, Any] | None:
             }
             for f in (a.get("fields") or [])[:12]
         ],
+        "platform": _platform_summary(a.get("platform")),
         "detail_link": a.get("detail_link"),
         "pagination": (a.get("pagination") or [])[:3],
         "json_list_paths": (a.get("json_list_paths") or [])[:5],
@@ -248,6 +269,29 @@ class Tools:
             "ui": f"{self.c.base_url}/recipes/{r['id']}",
         }
 
+    async def use_platform_api(
+        self, page_id: str, recipe_id: str, granularity: str = "product"
+    ) -> dict[str, Any]:
+        """Switch a saved recipe to the JSON API `fetch_page` found on that page (Shopify's
+        /products.json, a WordPress/WooCommerce REST endpoint, ...). Far fewer requests, typed
+        fields and real pagination; the recipe keeps its CSS selectors as fallbacks, so a dead
+        endpoint degrades to page scraping instead of failing. `granularity` is `product` (one
+        row per product) or `variant` (one row per size/colour). Validate afterwards as usual."""
+        current = await self.c.get(f"/api/recipes/{recipe_id}")
+        switched = await self.c.post(
+            f"/api/pages/{page_id}/use-api",
+            {"recipe": current["recipe"], "granularity": granularity},
+        )
+        saved = await self.save_recipe(
+            switched["recipe"], recipe_id=recipe_id, note="use platform API"
+        )
+        return {
+            **saved,
+            "platform": switched["platform"],
+            "endpoint": switched["endpoint"],
+            "granularity": switched["granularity"],
+        }
+
     async def validate_recipe(
         self, recipe_id: str, fetch_samples: bool = True, max_rows: int = 20
     ) -> dict[str, Any]:
@@ -447,6 +491,7 @@ TOOL_NAMES: tuple[str, ...] = (
     "list_recipes",
     "get_recipe",
     "save_recipe",
+    "use_platform_api",
     "validate_recipe",
     "request_pick",
     "get_pick",

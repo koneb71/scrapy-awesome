@@ -22,6 +22,7 @@ export interface Field {
   type: FieldType;
   description?: string;
   required?: boolean;
+  sparse?: boolean;   // usually empty by nature — an empty column is a note, not an error
   scope: Scope;
   extract: Extractor;
   alternates?: Extractor[];
@@ -54,7 +55,29 @@ export interface FetchConfig {
   block_static_assets?: boolean;
 }
 
+export interface ApiPaging {
+  kind: "none" | "page" | "cursor";
+  start: number;
+  step: number;
+  page_size?: number | null;
+  cursor_path?: string | null;
+  has_more_path?: string | null;
+  stop_on_empty: boolean;
+}
+export interface ApiConfig {
+  url_template: string;
+  method: "GET" | "POST";
+  body_template?: string | null;
+  headers: Record<string, string>;
+  paging: ApiPaging;
+  explode?: string | null;
+  on_error: "html" | "stop";
+  platform?: string | null;
+  note: string;
+}
+
 export interface Recipe {
+  api?: ApiConfig | null;
   version: 1;
   id?: string;
   name: string;
@@ -142,7 +165,34 @@ export interface Sample {
   created_at: string;
 }
 
+export interface PlatformSignal { name: string; weight: number; detail: string }
+export interface PlatformApi {
+  platform: string;
+  label: string;
+  endpoint: string;
+  reason: string;
+  evidence: string[];
+  currency: string | null;
+  granularity: "product" | "variant";
+  patch_origin?: string;
+  robots_note?: string;   // a candidate endpoint robots.txt put out of bounds
+}
+export interface PlatformBlock {
+  detected: boolean;
+  platform: string | null;
+  label: string | null;
+  score: number;
+  signals: string[];
+  extras: Record<string, string>;
+  api: PlatformApi | null;
+  reason: string;
+  probed: boolean;
+  cached?: boolean;
+  candidates?: { platform: string; label: string; score: number; detected: boolean }[];
+}
+
 export interface Analysis {
+  platform?: PlatformBlock | null;
   url: string;
   title: string;
   page_type: "list" | "single";

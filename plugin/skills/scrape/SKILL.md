@@ -11,17 +11,23 @@ You are driving **scrapy-awesome**, a local-first scraper. Everything you do hap
 ## Procedure
 
 1. **Understand the ask.** From `$ARGUMENTS` (and the conversation) extract: seed URL(s), the fields wanted (names + rough types), whether detail pages matter (e.g. description, specs → detail), limits (pages/items), output format. If the URL is missing, ask. Otherwise **do not** ask clarifying questions you can answer by looking at the page.
-2. **Fetch & look.** `fetch_page(url)` → read `analysis` (best `containers`, `fields` guesses with examples, `pagination`, `detail_link`, `json_list_paths`, `login_hint`, `notes`) and `outline` (a folded DOM — read selectors straight off it). If `blocked` is true or the outline is an empty app shell, retry with `tier: "browser"` (real Chrome); if it needs scrolling/clicking, `tier: "interactive"`.
-3. **Confirm selectors, cheaply.**
+2. **Check for an API first.** `fetch_page(url)` → if `analysis.platform.api_available` is true, the
+   site publishes its catalogue as JSON (Shopify `/products.json`, WooCommerce/WordPress REST, …).
+   Save a first recipe, then `use_platform_api(page_id, recipe_id)` — far fewer requests, typed
+   fields, real pagination, and the CSS selectors stay as fallbacks. Use `granularity="variant"`
+   only when the person wants a row per size/colour. If `platform` is present but
+   `api_available` is false, mention `why_not` in one clause and scrape the page as usual.
+3. **Fetch & look.** `fetch_page(url)` → read `analysis` (best `containers`, `fields` guesses with examples, `pagination`, `detail_link`, `json_list_paths`, `login_hint`, `notes`) and `outline` (a folded DOM — read selectors straight off it). If `blocked` is true or the outline is an empty app shell, retry with `tier: "browser"` (real Chrome); if it needs scrolling/clicking, `tier: "interactive"`.
+4. **Confirm selectors, cheaply.**
    - Per-item fields: `test_selector(page_id, selector, container=<container>)` → look at `fill_rate` and `values`. Aim for ≥ 0.9 fill on required fields.
    - Know a value but not its element? `search_page(page_id, "£11.50")` returns the element and its **relative** selector inside the container.
    - Data in embedded JSON (`__NEXT_DATA__`, `ld+json`)? `list_json_blobs(page_id)` then a `json_path` extractor — more robust than DOM selectors.
    - Prefer semantic selectors (`.price`, `[itemprop=name]`, `h3 a`) over positional ones (`div:nth-child(3)`).
    - Ambiguous, or the person can see the page better than you? `request_pick("click the price of the first product")` — one click beats three wrong guesses.
-4. **Save.** `save_recipe({...})` — see the schema below; put the person's words in `intent`; give a short human `name`. Keep the field list to what was asked (plus `url`/detail link when following details). It returns `ready` + `readiness_errors`.
-5. **Validate.** `validate_recipe(recipe_id)` fetches page 1, page 2 (via pagination) and two detail pages, then extracts in-process. Read `ok`, per-field `fill_rate`/`distinct`, `issues`, `pagination.next_found`, `detail`. Fix and repeat (edit selectors → `save_recipe(recipe, recipe_id=…)`) until it passes. Show the person 3–5 preview rows.
-6. **Run.** `start_run(recipe_id, max_pages=…)` (a small trial first when the site is unknown), then `run_status(run_id, wait_seconds=60)` for short crawls, or hand back and let them watch at the `ui` link for long ones. `get_rows` to sanity-check.
-7. **Export.** `export_run(run_id, "csv"|"xlsx"|"json"|"jsonl", dest="~/Downloads/…")` and tell them the path. Mention the recipe is saved (`open_ui("/recipes/<id>")`) and can be re-run or scheduled from the app.
+5. **Save.** `save_recipe({...})` — see the schema below; put the person's words in `intent`; give a short human `name`. Keep the field list to what was asked (plus `url`/detail link when following details). It returns `ready` + `readiness_errors`.
+6. **Validate.** `validate_recipe(recipe_id)` fetches page 1, page 2 (via pagination) and two detail pages, then extracts in-process. Read `ok`, per-field `fill_rate`/`distinct`, `issues`, `pagination.next_found`, `detail`. Fix and repeat (edit selectors → `save_recipe(recipe, recipe_id=…)`) until it passes. Show the person 3–5 preview rows.
+7. **Run.** `start_run(recipe_id, max_pages=…)` (a small trial first when the site is unknown), then `run_status(run_id, wait_seconds=60)` for short crawls, or hand back and let them watch at the `ui` link for long ones. `get_rows` to sanity-check.
+8. **Export.** `export_run(run_id, "csv"|"xlsx"|"json"|"jsonl", dest="~/Downloads/…")` and tell them the path. Mention the recipe is saved (`open_ui("/recipes/<id>")`) and can be re-run or scheduled from the app.
 
 ## Recipe shape (JSON)
 
