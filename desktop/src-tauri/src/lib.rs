@@ -148,6 +148,8 @@ fn spawn_sidecar(app: &AppHandle, shared: Shared) {
 }
 
 fn open_ui(app: &AppHandle, r: &Ready) {
+    // The token link signs the window in on a machine with no login set; once the user has a
+    // username and password the server redirects it to /login, which is what we want.
     let url = format!("{}/auth?token={}&next=/", r.url, r.token);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.navigate(url.parse().unwrap());

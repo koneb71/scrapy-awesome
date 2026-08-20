@@ -44,7 +44,9 @@ async function request<T>(method: string, path: string, body?: unknown, init?: R
     /* plain text */
   }
   if (!res.ok) {
-    if (res.status === 401) window.dispatchEvent(new CustomEvent("sa:unauthorized"));
+    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+      window.dispatchEvent(new CustomEvent("sa:unauthorized"));
+    }
     throw new ApiError(res.status, data);
   }
   return data as T;
@@ -55,7 +57,24 @@ const post = <T,>(p: string, b?: unknown) => request<T>("POST", p, b);
 const put = <T,>(p: string, b?: unknown) => request<T>("PUT", p, b);
 const del = <T,>(p: string) => request<T>("DELETE", p);
 
+export interface AuthStatus {
+  configured: boolean;
+  authenticated: boolean;
+  username: string | null;
+  locked_for: number;
+  min_password: number;
+}
+
 export const api = {
+  authStatus: () => get<AuthStatus>("/api/auth/status"),
+  authLogin: (username: string, password: string) =>
+    post<{ username: string }>("/api/auth/login", { username, password }),
+  authSetup: (username: string, password: string) =>
+    post<{ username: string }>("/api/auth/setup", { username, password }),
+  authLogout: () => post<{ ok: boolean }>("/api/auth/logout"),
+  authChangePassword: (current_password: string, new_password: string, username?: string) =>
+    post<{ username: string }>("/api/auth/password", { current_password, new_password, username }),
+
   health: () => get<{ ok: boolean; version: string; active_runs: number }>("/health"),
 
   // settings

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Activity, BookOpen, Bot, CalendarClock, KeyRound, Plus, Settings, Sparkles } from "lucide-react";
+import { Activity, BookOpen, Bot, CalendarClock, KeyRound, LogOut, Plus, Settings, Sparkles } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAppEvents } from "@/lib/ws";
 import { cn } from "@/lib/utils";
@@ -24,12 +24,18 @@ export default function App() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 15_000 });
   const pending = useQuery({ queryKey: ["picks", "pending"], queryFn: api.pendingPicks, refetchInterval: 30_000 });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
+  const auth = useQuery({ queryKey: ["auth", "status"], queryFn: api.authStatus, staleTime: 60_000 });
   const notificationsOn = settings.data?.settings.retention?.notifications ?? true;
   useEffect(() => {
-    const h = () => setUnauth(true);
+    // A session that has expired (or was revoked by a password change) should land on the login
+    // page, not on a banner over an app whose every request is failing.
+    const h = () => {
+      setUnauth(true);
+      if (location.pathname !== "/login") nav("/login", { replace: true });
+    };
     window.addEventListener("sa:unauthorized", h);
     return () => window.removeEventListener("sa:unauthorized", h);
-  }, []);
+  }, [nav]);
 
   // Agent hand-offs (Claude Code / Gemini CLI via the MCP server): pick requests + navigation.
   useAppEvents((ev) => {
@@ -120,19 +126,29 @@ export default function App() {
             <div className="text-muted-foreground line-clamp-2">{pendingPick.prompt}</div>
           </button>
         )}
-        <div className="mt-auto p-3 text-[11px] text-muted-foreground leading-relaxed">
-          Local-first. Everything stays on this machine.
+        <div className="mt-auto p-3 space-y-2">
+          <button
+            onClick={async () => {
+              await api.authLogout().catch(() => {});
+              qc.clear();
+              window.location.assign("/login");
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+          >
+            <LogOut className="size-3.5" /> Sign out{auth.data?.username ? ` (${auth.data.username})` : ""}
+          </button>
+          <div className="text-[11px] text-muted-foreground leading-relaxed">
+            Local-first. Everything stays on this machine.
+          </div>
         </div>
       </aside>
       <main className="flex-1 min-w-0 overflow-auto">
         {unauth && (
           <div className="p-4">
             <Alert variant="destructive">
-              <AlertTitle>Not signed in to the local server</AlertTitle>
+              <AlertTitle>Signed out</AlertTitle>
               <AlertDescription>
-                This page needs the sign-in link, which carries the local server's token. Run{" "}
-                <code>scrapy-awesome open</code> in a terminal — it prints the link for the server
-                already running and opens it here.
+                Your session ended. <Link to="/login" className="underline">Sign in again</Link>.
               </AlertDescription>
             </Alert>
           </div>

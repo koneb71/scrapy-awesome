@@ -6,6 +6,7 @@ Subcommands are added phase by phase. Heavy imports (Scrapy, FastAPI) happen ins
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import Annotated
 
@@ -141,6 +142,60 @@ def serve(
     )
 
 
+@app.command()
+def passwd(
+    username: Annotated[
+        str, typer.Option(help="Username to set (default: keep the current one)")
+    ] = "",
+    reset: Annotated[
+        bool, typer.Option("--reset", help="Remove the login, back to the first-run setup")
+    ] = False,
+) -> None:
+    """Set (or reset) the username and password the UI signs in with."""
+    import httpx
+
+    from scrapy_awesome.api import credentials
+    from scrapy_awesome.config import get_paths
+    from scrapy_awesome.tools.client import running_server
+
+    def _revoke() -> None:
+        """A password change should not leave an open browser signed in."""
+        info = running_server(get_paths())
+        if not info:
+            return
+        with contextlib.suppress(Exception):
+            httpx.post(
+                f"{info['url']}/api/auth/revoke-sessions",
+                headers={"Authorization": f"Bearer {info['token']}"},
+                timeout=5,
+            )
+
+    if reset:
+        removed = credentials.clear()
+        _revoke()
+        console.print(
+            "[green]Login removed.[/green] The UI will ask you to create one."
+            if removed
+            else "No login was set."
+        )
+        return
+
+    current = credentials.load()
+    name = username.strip() or (current.username if current else "")
+    if not name:
+        name = typer.prompt("Username", default="admin")
+    password = typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    try:
+        creds = credentials.save(name, password)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=2) from exc
+    _revoke()
+    console.print(
+        f"[green]Login set for {creds.username}.[/green] Sign in at the app's login page."
+    )
+
+
 @app.command("open")
 def open_ui(
     route: Annotated[str, typer.Argument(help="Where to land, e.g. /recipes")] = "/",
@@ -156,6 +211,7 @@ def open_ui(
     """
     import webbrowser
 
+    from scrapy_awesome.api import credentials
     from scrapy_awesome.config import get_paths
     from scrapy_awesome.tools.client import running_server
 
@@ -164,7 +220,13 @@ def open_ui(
         console.print("[red]No server is running.[/red] Start one with: scrapy-awesome serve")
         raise typer.Exit(code=1)
     target = route if route.startswith("/") else f"/{route}"
-    url = f"{info['url']}/auth?token={info['token']}&next={target}"
+    # With a login configured the UI asks for it; a token in the URL would be a way around the
+    # password, so `open` just points at the page.
+    url = (
+        f"{info['url']}{target}"
+        if credentials.configured()
+        else f"{info['url']}/auth?token={info['token']}&next={target}"
+    )
     typer.echo(url)  # plain: a wrapped or marked-up URL is not copy-pasteable
     if not no_open:
         webbrowser.open(url)

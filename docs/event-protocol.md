@@ -63,7 +63,7 @@ Recipe fields plus implicit columns: `_url` (detail URL or `page#item-N`), `_pag
    MCP auto-start handoff. Because the socket is already listening, connecting right after the ready
    line never gets "connection refused" (requests queue in the backlog until uvicorn starts serving).
 
-The UI is authenticated by opening `GET /auth?token=<token>&next=/`, which sets the HttpOnly session
+The UI is authenticated by a username and password (`POST /api/auth/login`), which sets the HttpOnly session
 cookie. On SIGTERM (or `--idle-exit`, or `--ppid-watch` losing its parent) the server terminates
 active workers, flushes their events, and exits within ~3 s even if browser WebSockets are open.
 

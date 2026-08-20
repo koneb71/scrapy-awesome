@@ -8,6 +8,7 @@ import NewPage from "./routes/NewPage";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RouteError } from "@/components/RouteError";
+import LoginPage from "./routes/LoginPage";
 
 // Route-level code splitting: the editor (picker, preview) and run page are the heavy ones.
 const RecipesPage = lazy(() => import("./routes/RecipesPage"));
@@ -27,6 +28,7 @@ const fallback = <div className="p-6 text-sm text-muted-foreground">Loading…</
 const lazyEl = (el: React.ReactNode) => <Suspense fallback={fallback}>{el}</Suspense>;
 
 const router = createBrowserRouter([
+  { path: "/login", element: <LoginPage />, errorElement: <RouteError /> },
   {
     path: "/",
     element: <App />,

@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from scrapy_awesome import __version__
+from scrapy_awesome.api import credentials
 from scrapy_awesome.api.auth import COOKIE_NAME, AuthState, is_authenticated
 from scrapy_awesome.api.bus import EventBus
 from scrapy_awesome.api.manager import RunManager
@@ -32,6 +33,9 @@ from scrapy_awesome.store import Store, get_store
 logger = logging.getLogger(__name__)
 
 PUBLIC_PREFIXES = ("/health", "/auth", "/assets/", "/favicon", "/vite.svg")
+# The door itself cannot be behind the lock: the login page has to ask who is configured and post
+# a password before it has a session. `/api/auth/password` checks its own session.
+PUBLIC_API_PATHS = ("/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/auth/logout")
 
 
 def find_ui_dir() -> Path | None:
@@ -58,7 +62,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         app = request.app
         app.state.last_activity = time.monotonic()
-        protected = path.startswith("/api/") or path.startswith("/ws/")
+        protected = (path.startswith("/api/") or path.startswith("/ws/")) and (
+            path not in PUBLIC_API_PATHS
+        )
         if protected and not is_authenticated(request, app.state.auth):
             return JSONResponse({"detail": "not authenticated"}, status_code=401)
         return await call_next(request)
@@ -162,6 +168,14 @@ def create_app(
 
     @app.get("/auth")
     def auth_exchange(request: Request, token: str = "", next: str = "/") -> Any:
+        """Machine token → session cookie, for the desktop shell on a machine with no login set.
+
+        Once someone has chosen a username and password, that is the way in: a token in a URL is
+        exactly the thing they asked to stop chasing, and it would otherwise be a way around the
+        password for anyone who can read the URL out of a shell history or a log.
+        """
+        if credentials.configured():
+            return RedirectResponse(url="/login", status_code=303)
         if not auth.token_ok(token):
             return JSONResponse({"detail": "bad token"}, status_code=401)
         sid = auth.new_session()
@@ -192,12 +206,16 @@ def create_app(
         ws,
     )
     from scrapy_awesome.api.routes import (
+        auth as auth_routes,
+    )
+    from scrapy_awesome.api.routes import (
         fallback as fallback_routes,
     )
     from scrapy_awesome.api.routes import (
         settings as settings_routes,
     )
 
+    app.include_router(auth_routes.router, prefix="/api")
     app.include_router(settings_routes.router, prefix="/api")
     app.include_router(recipes.router, prefix="/api")
     app.include_router(pages.router, prefix="/api")

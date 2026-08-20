@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -159,6 +160,8 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      <LoginCard />
+
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">Crawling</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-3 text-sm">
@@ -259,5 +262,49 @@ function Snippet({ label, code, hint, multiline }: { label: string; code: string
       </div>
       <pre className={`rounded-md border bg-muted/40 p-2 font-mono text-xs overflow-x-auto ${multiline ? "" : "whitespace-pre-wrap break-all"}`}>{code}</pre>
     </div>
+  );
+}
+
+
+function LoginCard() {
+  const auth = useQuery({ queryKey: ["auth", "status"], queryFn: api.authStatus });
+  const [username, setUsername] = useState("");
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [msg, setMsg] = useState("");
+  useEffect(() => { if (auth.data?.username) setUsername(auth.data.username); }, [auth.data?.username]);
+
+  const save = useMutation({
+    mutationFn: () => api.authChangePassword(current, next, username),
+    onSuccess: (r) => {
+      setCurrent(""); setNext(""); setMsg("");
+      toast.success(`Password changed for ${r.username}. Other browsers were signed out.`);
+      auth.refetch();
+    },
+    onError: (e: Error) => setMsg(((e as ApiError).body as { detail?: string })?.detail ?? e.message),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Login</CardTitle>
+        <CardDescription>
+          The username and password this app signs in with. Forgotten it? <code>scrapy-awesome passwd</code>{" "}
+          sets a new one from the terminal (and <code>--reset</code> clears it back to first-run setup).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid grid-cols-2 gap-3 text-sm">
+        <div><Label>Username</Label><Input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" /></div>
+        <div />
+        <div><Label>Current password</Label><Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></div>
+        <div><Label>New password</Label><Input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} /></div>
+        {msg && <p className="col-span-2 text-destructive">{msg}</p>}
+        <div className="col-span-2">
+          <Button size="sm" disabled={!current || !next || save.isPending} onClick={() => save.mutate()}>
+            Change password
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

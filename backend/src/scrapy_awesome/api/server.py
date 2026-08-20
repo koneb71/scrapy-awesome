@@ -72,6 +72,14 @@ def find_running_server(paths: Paths | None = None) -> dict[str, Any] | None:
     return info if server_alive(info) else None
 
 
+def _entry_url(base_url: str, token: str) -> str:
+    """Where to send a browser. With a username and password set that is the login page — the
+    token link would sign you in around the password, which is the opposite of what it is for."""
+    from scrapy_awesome.api import credentials
+
+    return base_url if credentials.configured() else f"{base_url}/auth?token={token}"
+
+
 def serve(
     *,
     port: int = 0,
@@ -94,7 +102,7 @@ def serve(
             file=sys.stderr,
         )
         if open_browser:
-            webbrowser.open(f"{existing['url']}/auth?token={existing['token']}")
+            webbrowser.open(_entry_url(existing["url"], existing["token"]))
         return 0
 
     # Bind + listen *before* announcing: the ready line / server.json must mean "connect now
@@ -163,7 +171,7 @@ def serve(
             json.dumps({"port": port, "token": token, "url": base_url, "pid": os.getpid()}),
             flush=True,
         )
-    auth_url = f"{base_url}/auth?token={token}"
+    auth_url = _entry_url(base_url, token)
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(auth_url)).start()
     else:

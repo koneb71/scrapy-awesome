@@ -26,19 +26,22 @@ fields, preview the result, run the crawl, export JSON / CSV / Excel — everyth
 > hand-off for pages selectors can't read, **AI fields**, a **Tauri desktop shell** (`desktop/`),
 > recipe versions, standalone **Scrapy project export**, a Claude Desktop **MCPB** manifest and the
 > opt-in "use my Claude Code login" toggle. See `docs/` (`robustness.md`, `providers.md`,
-> `auth-modes.md`, `api-mode.md`, `recipe-format.md`, `event-protocol.md`).
+> `auth-modes.md`, `api-mode.md`, `signing-in.md`, `recipe-format.md`, `event-protocol.md`).
 
 ## Quick start (web mode)
 
 ```bash
 cd frontend && pnpm install && pnpm build      # builds the UI once into frontend/dist
 cd ../backend && uv sync
-uv run scrapy-awesome serve                     # opens http://127.0.0.1:<port>/auth?token=… in your browser
+uv run scrapy-awesome serve                     # opens the UI; first run asks you to create a login
 ```
 
-The UI signs in with a token the server prints once. If the server is already running in the
-background (`service install`, the desktop app), `uv run scrapy-awesome open` prints that link
-again and opens it — optionally at a route, e.g. `scrapy-awesome open /recipes`.
+The first time the UI opens it asks you to create a **username and password** for this machine;
+after that `/login` is the way in. `uv run scrapy-awesome passwd` sets or resets it from the
+terminal, and `uv run scrapy-awesome open` opens the UI of a server that is already running in the
+background (`service install`, the desktop app), optionally at a route: `scrapy-awesome open
+/recipes`. Machine clients — the MCP server, the CLI, crawl workers — use the per-process token in
+`server.json` instead. Details: `docs/signing-in.md`.
 
 ### With your Claude / Gemini subscription (MCP)
 
