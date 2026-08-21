@@ -17,6 +17,19 @@ export interface Extractor {
   all?: boolean;
 }
 
+export type TransformKind =
+  | "trim" | "collapse_space" | "lower" | "upper" | "title" | "strip_prefix" | "strip_suffix"
+  | "replace" | "regex_replace" | "split" | "prepend" | "append" | "decimal_comma" | "digits"
+  | "default";
+
+export interface Transform {
+  kind: TransformKind;
+  value?: string;
+  pattern?: string;
+  chars?: string;
+  index?: number | null;
+}
+
 export interface Field {
   name: string;
   type: FieldType;
@@ -25,6 +38,7 @@ export interface Field {
   sparse?: boolean;   // usually empty by nature — an empty column is a note, not an error
   scope: Scope;
   extract: Extractor;
+  transforms?: Transform[];
   alternates?: Extractor[];
   enum?: string[] | null;
   examples?: string[];
@@ -76,8 +90,25 @@ export interface ApiConfig {
   note: string;
 }
 
+export interface Source {
+  kind: "seeds" | "urls" | "sitemap";
+  urls: string[];
+  sitemap?: string | null;
+  include?: string | null;
+  exclude?: string | null;
+  max_urls: number;
+}
+
+export interface Incremental {
+  enabled: boolean;
+  refetch_after_days?: number | null;
+  skip_unchanged_rows?: boolean;
+}
+
 export interface Recipe {
   api?: ApiConfig | null;
+  source?: Source;
+  incremental?: Incremental;
   version: 1;
   id?: string;
   name: string;
@@ -191,8 +222,28 @@ export interface PlatformBlock {
   candidates?: { platform: string; label: string; score: number; detected: boolean }[];
 }
 
+export interface XhrCandidate {
+  url: string;
+  container: string;
+  count: number;
+  keys: string[];
+  score: number;
+  why: string[];
+  url_template: string;
+  paging: { kind: "none" | "page" | "cursor"; start?: number; step?: number; page_size?: number | null; cursor_path?: string | null };
+  sample: Record<string, unknown>;
+}
+export interface XhrBlock {
+  sample_id: string;
+  watched: number;
+  candidates: XhrCandidate[];
+  confirmed: string | null;
+  reason: string;
+}
+
 export interface Analysis {
   platform?: PlatformBlock | null;
+  xhr?: XhrBlock | null;
   url: string;
   title: string;
   page_type: "list" | "single";
@@ -235,6 +286,22 @@ export interface ValidationReport {
   issues: Issue[];
   pagination: Record<string, unknown>;
   detail: Record<string, unknown>;
+}
+
+export interface DatasetRow {
+  key: string;
+  url: string;
+  first_seen: string;
+  last_seen: string;
+  last_changed: string | null;
+  changes: number;
+  runs: number;
+  gone: boolean;
+  [field: string]: unknown;
+}
+export interface DatasetHistoryEntry {
+  at: string;
+  diff: Record<string, [unknown, unknown]>;
 }
 
 export interface SessionRow {

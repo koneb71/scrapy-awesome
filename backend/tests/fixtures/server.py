@@ -44,6 +44,29 @@ def build_app() -> FastAPI:
     def redesign_item(item_id: int) -> str:
         return sites.detail_page(item_id, "/redesign")
 
+    # ---- xhr: a page that fetches its list (and pings analytics) ------------------------
+    @app.get("/xhr/", response_class=HTMLResponse)
+    def xhr_index() -> str:
+        return sites.xhr_page("/xhr")
+
+    @app.get("/xhr/api/items")
+    def xhr_items(page: int = 1, limit: int = 5) -> Response:
+        return Response(
+            json.dumps(sites.xhr_api(page, limit)), media_type="application/json; charset=utf-8"
+        )
+
+    @app.post("/xhr/collect")
+    def xhr_collect() -> Response:
+        # the decoy: JSON, an array of objects, fetched by the same page
+        return Response(
+            json.dumps({"events": [{"t": 1, "n": "pageview"}, {"t": 2}, {"t": 3}, {"t": 4}]}),
+            media_type="application/json",
+        )
+
+    @app.get("/xhr/item/{item_id}", response_class=HTMLResponse)
+    def xhr_item(item_id: int) -> str:
+        return sites.detail_page(item_id, "/xhr")
+
     # ---- spa --------------------------------------------------------------------------
     @app.get("/spa/", response_class=HTMLResponse)
     def spa_index() -> str:
@@ -239,6 +262,38 @@ def build_app() -> FastAPI:
             )
         return _json(posts, headers={"x-wp-total": str(total), "x-wp-totalpages": str(pages)})
 
+    # ---- conditional requests (incremental runs) ----------------------------------------
+    @app.get("/etag/item/{item_id}", response_class=HTMLResponse)
+    def etag_item(item_id: int, request: Request) -> Response:
+        """Answers 304 when the client already has this version — the whole point of an
+        incremental re-run."""
+        html = sites.detail_page(item_id, "/etag")
+        tag = f'"item-{item_id}-v1"'
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers={"ETag": tag})
+        return HTMLResponse(html, headers={"ETag": tag, "Cache-Control": "no-cache"})
+
+    @app.get("/etag/sitemap.xml")
+    def etag_sitemap() -> Response:
+        urls = "".join(
+            f"<url><loc>/etag/item/{i}</loc><lastmod>2026-08-01</lastmod></url>"
+            for i in range(1, 6)
+        )
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+        )
+        return Response(body, media_type="application/xml")
+
+    # ---- sitemaps -----------------------------------------------------------------------
+    @app.get("/sitemap.xml")
+    def sitemap_index() -> Response:
+        return Response(sites.sitemap_index(), media_type="application/xml")
+
+    @app.get("/sitemap-items-{part}.xml")
+    def sitemap_part(part: int) -> Response:
+        return Response(sites.sitemap_urlset(part), media_type="application/xml")
+
     @app.get("/robots.txt", response_class=PlainTextResponse)
     def robots() -> str:
         # Modelled on Shopify's own template (the /shop-blocked/ group is the one the fallback
@@ -251,7 +306,7 @@ Disallow: /*/checkouts
 Disallow: /recommendations/products
 Disallow: /shop-blocked/products.json
 Disallow: /shop/collections/private/products
-Sitemap: /sitemap.xml
+Sitemap: /sitemap-items-0.xml
 """
 
     @app.get("/health")

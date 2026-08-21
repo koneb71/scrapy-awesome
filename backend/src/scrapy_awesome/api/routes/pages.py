@@ -4,6 +4,7 @@ selector testing."""
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Literal
@@ -14,12 +15,14 @@ from lxml import html as lxml_html
 from pydantic import BaseModel, Field, ValidationError
 
 from scrapy_awesome.api.platform_probe import detect_for_sample, switch_to_api
-from scrapy_awesome.extract.engine import html_selector
+from scrapy_awesome.extract.engine import api_blobs, html_selector, select_containers
 from scrapy_awesome.extract.selectors import raw_values, select_nodes
 from scrapy_awesome.recipe.models import Extractor, Recipe, selector_kind
-from scrapy_awesome.snapshot.analyze import analyze_html
+from scrapy_awesome.snapshot import xhr
+from scrapy_awesome.snapshot.analyze import analyze_html, visible_text
 from scrapy_awesome.snapshot.fold import fold_html
 from scrapy_awesome.snapshot.markdown import to_markdown
+from scrapy_awesome.snapshot.platform import apply_offer, origin_of, robots_allows, robots_url
 from scrapy_awesome.snapshot.search import search_text
 from scrapy_awesome.store import SampleRow, Store, iso
 
@@ -284,6 +287,110 @@ def use_api(request: Request, sample_id: str, body: SwitchIn) -> dict[str, Any]:
         "platform": block.get("platform"),
         "endpoint": block["api"]["endpoint"],
         "granularity": body.granularity,
+        "ready": recipe.ready,
+    }
+
+
+class UseXhrIn(BaseModel):
+    recipe: dict[str, Any]
+    url_template: str  # which candidate, by the template `find-api` returned
+
+
+@router.post("/pages/{sample_id}/find-api")
+async def find_api(request: Request, sample_id: str, confirm: bool = True) -> dict[str, Any]:
+    """Open the page in a real browser, watch the JSON it fetches, and rank what looks like the
+    list on screen. The winner is re-fetched on its own before it is offered — an endpoint that
+    only answers inside the page's session is no use to a crawl."""
+    store, row = _get(request, sample_id)
+    manager = request.app.state.manager
+    url = row.final_url or row.url
+
+    captures = list(row.xhr or [])
+    if not captures:  # the cached page was fetched without a browser watching
+        rows = await manager.snapshot([url], recipe=None, kind=row.kind, capture_xhr=True)
+        if not rows:
+            raise HTTPException(502, "could not open the page in a browser")
+        row = rows[0]
+        captures = list(row.xhr or [])
+        sample_id = row.id
+
+    text = visible_text(store.sample_html(row))
+    found = xhr.candidates(captures, page_text=text)
+    out: dict[str, Any] = {
+        "sample_id": sample_id,
+        "watched": len(captures),
+        "candidates": [c.to_dict() for c in found],
+        "confirmed": None,
+        "reason": "",
+    }
+    if not found:
+        out["reason"] = (
+            "the page fetched no JSON that looks like its list — it may render from HTML, "
+            "or from an endpoint that needs a session"
+        )
+    elif confirm:
+        best = found[0]
+        ok, why = await _confirm_endpoint(manager, store, best)
+        out["confirmed"] = best.url_template if ok else None
+        out["reason"] = why
+    analysis = dict(row.analysis or {})
+    analysis["xhr"] = {k: out[k] for k in ("watched", "candidates", "confirmed", "reason")}
+    store.update_sample(sample_id, analysis=analysis)
+    return out
+
+
+async def _confirm_endpoint(manager: Any, store: Store, cand: Any) -> tuple[bool, str]:
+    """Fetch the endpoint the way a crawl would: no browser, no page session, robots obeyed."""
+    origin = origin_of(cand.url)
+    # Pin the plain HTTP tier: this domain was just fetched with a browser, so the tier memory
+    # would send Chrome — which hands back a JSON *viewer document*, not the JSON.
+    rows = await manager.snapshot(
+        [robots_url(origin), cand.url], recipe=None, kind="page", tier="http"
+    )
+    fetched = {r.url: r for r in rows}
+    robots_row = fetched.get(robots_url(origin))
+    robots_txt = store.sample_html(robots_row) if robots_row else ""
+    if not robots_allows(robots_txt, cand.url):
+        return False, f"robots.txt disallows {cand.url}"
+    got = fetched.get(cand.url)
+    if got is None or got.status >= 400:
+        status = got.status if got else "no response"
+        return False, f"the endpoint answered {status} outside the page — its session is required"
+    body = store.sample_html(got)
+    try:
+        doc = json.loads(body)
+    except (ValueError, TypeError):
+        return False, "the endpoint returned something other than JSON outside the page"
+    items, _which = select_containers(html_selector(""), cand.container, [], api_blobs(doc))
+    if len(items) < 1:
+        return False, "the endpoint answered, but without the list the page showed"
+    return True, f"{len(items)} rows when fetched on its own"
+
+
+@router.post("/pages/{sample_id}/use-xhr")
+def use_xhr(request: Request, sample_id: str, body: UseXhrIn) -> dict[str, Any]:
+    """Rewrite a recipe to read the endpoint the page reads, HTML selectors kept as fallbacks."""
+    _store, row = _get(request, sample_id)
+    block = (row.analysis or {}).get("xhr") or {}
+    chosen = next(
+        (c for c in block.get("candidates") or [] if c["url_template"] == body.url_template), None
+    )
+    if chosen is None:
+        raise HTTPException(409, "that endpoint is not one of this page's candidates")
+    if block.get("confirmed") and block["confirmed"] != body.url_template:
+        raise HTTPException(409, block.get("reason") or "that endpoint was not confirmed")
+    patch = xhr.offer_patch(xhr.XhrCandidate(**chosen))
+    merged = apply_offer(body.recipe, patch)
+    try:
+        recipe = Recipe.model_validate(merged)
+    except ValidationError as exc:
+        errors = [
+            {"loc": ".".join(str(x) for x in e["loc"]), "msg": e["msg"]} for e in exc.errors()
+        ]
+        raise HTTPException(422, {"errors": errors}) from exc
+    return {
+        "recipe": recipe.to_dict(),
+        "endpoint": chosen["url"],
         "ready": recipe.ready,
     }
 

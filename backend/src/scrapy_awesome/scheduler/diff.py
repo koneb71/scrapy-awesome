@@ -25,12 +25,15 @@ def diff_rows(
     keys: list[str] | None = None,
     *,
     sample: int = 25,
+    partial: bool = False,
 ) -> dict[str, Any]:
+    """`partial` means the new run deliberately skipped unchanged pages (an incremental run), so a
+    row it did not produce is a row nobody looked at — not a row that disappeared."""
     keys = keys or ["_url"]
     old_by = {_key(r, keys): r for r in old}
     new_by = {_key(r, keys): r for r in new}
     added = [new_by[k] for k in new_by if k not in old_by]
-    removed = [old_by[k] for k in old_by if k not in new_by]
+    removed = [] if partial else [old_by[k] for k in old_by if k not in new_by]
     changed: list[dict[str, Any]] = []
     for k, n in new_by.items():
         o = old_by.get(k)
@@ -50,6 +53,7 @@ def diff_rows(
             )
     return {
         "keys": keys,
+        "partial": partial,
         "old_count": len(old_by),
         "new_count": len(new_by),
         "added": len(added),

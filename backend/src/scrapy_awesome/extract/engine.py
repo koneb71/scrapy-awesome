@@ -7,7 +7,7 @@ from typing import Any
 
 from parsel import Selector
 
-from scrapy_awesome.extract import jsonpath
+from scrapy_awesome.extract import jsonpath, transform
 from scrapy_awesome.extract.coerce import coerce
 from scrapy_awesome.extract.selectors import absolutize, extract_raw, select_nodes
 from scrapy_awesome.recipe.models import JSON_PREFIX, Extractor, Field, Recipe, selector_kind
@@ -103,6 +103,8 @@ def _run_field(
         raw = extract_raw(ctx, ext)
         if ext.template:  # build a value the payload only implies, e.g. a URL from a handle
             raw = [ext.template.replace("{value}", str(v)) for v in raw if v not in (None, "")]
+        if f.transforms:
+            raw = transform.apply(raw, f.transforms)
         if f.type in ("url", "image"):
             raw = absolutize(raw, base_url)
         value = coerce(raw, f)
@@ -151,6 +153,8 @@ def item_url(recipe: Recipe, item: ExtractedItem, page_url: str) -> str:
     own = item.detail_url
     if own is None and recipe.api is not None:
         own = _row_url(recipe, item)
+    if own is None and recipe.page_type == "single":
+        return page_url  # one row per page: the page *is* the row's identity
     return own or f"{page_url}#item-{item.index}"
 
 

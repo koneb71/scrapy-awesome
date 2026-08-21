@@ -66,6 +66,11 @@ class EscalationMiddleware:
 
     # ---- requests -----------------------------------------------------------------------------
     def process_request(self, request: Request) -> Request | None:
+        # `sa_headers` carries the recipe's own headers and, on an incremental run, the
+        # If-None-Match / If-Modified-Since that let a server answer "nothing new".
+        for key, value in (request.meta.get("sa_headers") or {}).items():
+            if not request.headers.get(key):
+                request.headers[key] = value
         sa = request.meta.get(META_KEY)
         if not isinstance(sa, dict) or sa.get("attempt", 0) > 0 or sa.get("policy_tier") != "auto":
             return None
@@ -80,6 +85,12 @@ class EscalationMiddleware:
     def process_response(self, request: Request, response: Response) -> Any:
         sa = request.meta.get(META_KEY)
         if not isinstance(sa, dict):
+            return response
+        if response.status == 304:
+            # "Nothing has changed" — an empty body by design. Block detection reads an empty body
+            # as a wall and would escalate to a browser, turning the cheapest possible answer into
+            # the most expensive one.
+            self.stats.inc_value("sa/unchanged")
             return response
         spider = self.crawler.spider
         tier: str = sa["tier"]

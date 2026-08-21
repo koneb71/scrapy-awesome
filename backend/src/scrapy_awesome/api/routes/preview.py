@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
 from scrapy_awesome.api.routes.pages import sample_out
+from scrapy_awesome.crawl import sitemap
 from scrapy_awesome.extract.engine import api_blobs, extract_list_items, next_page_url
 from scrapy_awesome.extract.fingerprint import compute_fingerprints
 from scrapy_awesome.extract.validate import Sample, validate_on_samples
@@ -96,6 +97,38 @@ def preview(request: Request, body: PreviewIn) -> dict[str, Any]:
     }
 
 
+async def resolve_source_urls(
+    manager: Any, store: Store, recipe: Recipe, *, want: int = 2
+) -> list[str]:
+    """The first URLs a `urls`/`sitemap` recipe would crawl — resolved the same way the spider
+    resolves them, so the preview samples the pages the run will actually fetch."""
+    src = recipe.source
+    if src.kind == "urls":
+        return sitemap.clean_urls(src.urls, limit=src.max_urls)[:want]
+    if src.kind != "sitemap":
+        return []
+    start = src.sitemap or sitemap.default_sitemap(recipe.seeds[0])
+    seen: set[str] = set()
+    for url in (start,):
+        rows = await manager.snapshot([url], recipe=None, kind="page", tier="http")
+        if not rows:
+            return []
+        body = store.sample_html(rows[0]).encode("utf-8", "replace")
+        kind, entries = sitemap.parse(body, url=rows[0].final_url or url)
+        if kind == "sitemapindex" and entries:  # one level is enough to show what it will crawl
+            child = await manager.snapshot([entries[0].loc], recipe=None, kind="page", tier="http")
+            if not child:
+                return []
+            kind, entries = sitemap.parse(
+                store.sample_html(child[0]).encode("utf-8", "replace"), url=entries[0].loc
+            )
+        chosen = sitemap.select(
+            entries, include=src.include, exclude=src.exclude, limit=want, seen=seen
+        )
+        return [e.loc for e in chosen]
+    return []
+
+
 @router.post("/preview/samples")
 async def fetch_samples(request: Request, body: SamplesIn) -> dict[str, Any]:
     """Fetch the standard validation set through the engine and store it for this recipe."""
@@ -119,8 +152,18 @@ async def fetch_samples(request: Request, body: SamplesIn) -> dict[str, Any]:
         store.delete_sample(old.id)
 
     api = recipe.api
-    seed_url = api.render(page=api.paging.start)[0] if api else recipe.seeds[0]
-    first_rows = await manager.snapshot([seed_url], recipe=recipe, kind="list", tier=body.tier)
+    # What the crawl will start on: the endpoint, the list you pasted, the sitemap's first hits,
+    # or the seed page. Preview has to walk in through the same door as the run.
+    source_urls = [] if api else await resolve_source_urls(manager, store, recipe, want=2)
+    seed_url = (
+        api.render(page=api.paging.start)[0]
+        if api
+        else (source_urls[0] if source_urls else recipe.seeds[0])
+    )
+    # A JSON endpoint must be fetched as a file. This host may be remembered as "interactive"
+    # (finding the API meant browsing it), and Chrome answers a .json URL with a viewer document.
+    tier = body.tier or ("http" if api else None)
+    first_rows = await manager.snapshot([seed_url], recipe=recipe, kind="list", tier=tier)
     if not first_rows:
         raise HTTPException(502, "could not fetch the seed page")
     first = first_rows[0]
@@ -139,7 +182,9 @@ async def fetch_samples(request: Request, body: SamplesIn) -> dict[str, Any]:
         )
     first_rows[0] = first
     more: list[tuple[str, str]] = []
-    if body.with_page2 and api is not None and api.paging.kind == "page":
+    if body.with_page2 and source_urls[1:]:
+        more.append((source_urls[1], "list"))  # a second page from the same source
+    elif body.with_page2 and api is not None and api.paging.kind == "page":
         more.append((api.render(page=api.paging.start + api.paging.step)[0], "list"))
     elif body.with_page2:
         nxt = next_page_url(recipe, html, first.final_url or first.url)
@@ -166,7 +211,9 @@ async def fetch_samples(request: Request, body: SamplesIn) -> dict[str, Any]:
                 more.append((links[len(links) // 2], "detail"))
     rows = list(first_rows)
     for url, kind in more:
-        rows += await manager.snapshot([url], recipe=recipe, kind=kind, tier=body.tier)
+        rows += await manager.snapshot(
+            [url], recipe=recipe, kind=kind, tier=tier if kind == "list" else body.tier
+        )
     samples = [_to_sample(store, r, recipe) for r in rows]
     report = validate_on_samples(recipe, samples)
     fps = _remember_fingerprints(store, recipe, rows)

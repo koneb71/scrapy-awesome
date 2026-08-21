@@ -200,6 +200,11 @@ class RunManager:
             args += ["--max-pages", str(max_pages)]
         if max_items is not None:
             args += ["--max-items", str(max_items)]
+        if recipe.incremental.enabled and recipe.id:
+            # Hand the worker what the last run learned; a file, not arguments — a sitemap crawl
+            # remembers tens of thousands of URLs.
+            state = self.store.page_state(recipe.id)
+            (run_dir / "page_state.json").write_text(json.dumps(state), encoding="utf-8")
         proc = await self._spawn(args, run_dir)
         handle = RunHandle(run_id=run_id, run_dir=run_dir, proc=proc, kind="crawl")
         self.active[run_id] = handle
@@ -207,6 +212,35 @@ class RunManager:
         handle.task = asyncio.create_task(self._watch(handle), name=f"run-{run_id}")
         self.bus.publish(run_id, {"t": "status", "run_id": run_id, "status": "running"})
         return row  # type: ignore[return-value]
+
+    def _fold_dataset(self, handle: RunHandle, stats: dict[str, Any]) -> dict[str, int] | None:
+        """Runs are episodes; the dataset is what the recipe knows. Fold one into the other."""
+        row = self.store.get_run(handle.run_id)
+        if row is None or not row.recipe_id:
+            return None
+        recipe = self.store.get_recipe(row.recipe_id)
+        keys = recipe.dedupe_key if recipe else ["_url"]
+        with contextlib.suppress(Exception):
+            return self.store.fold_run_into_dataset(
+                row.recipe_id, handle.run_id, keys, partial=bool(stats.get("skipped"))
+            )
+        return None
+
+    def _ingest_page_state(self, handle: RunHandle) -> int:
+        """Fold the worker's page-state lines into the store, so the next run can skip them."""
+        path = handle.run_dir / "page_state.jsonl"
+        if not path.exists():
+            return 0
+        row = self.store.get_run(handle.run_id)
+        recipe_id = row.recipe_id if row else None
+        if not recipe_id:
+            return 0
+        entries: list[dict[str, Any]] = []
+        with contextlib.suppress(OSError):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                with contextlib.suppress(json.JSONDecodeError):
+                    entries.append(json.loads(line))
+        return self.store.remember_page_state(recipe_id, entries)
 
     async def _watch(self, handle: RunHandle) -> None:
         code = await handle.proc.wait()
@@ -216,6 +250,12 @@ class RunManager:
         if sp.exists():
             with contextlib.suppress(json.JSONDecodeError):
                 stats = json.loads(sp.read_text())
+        learned = self._ingest_page_state(handle)
+        if learned:
+            stats["page_state"] = learned
+        folded = self._fold_dataset(handle, stats)
+        if folded:
+            stats["dataset"] = folded
         if handle.healed:
             stats["healed"] = handle.healed
         if handle.fills:
@@ -415,12 +455,16 @@ class RunManager:
         kind: str = "list",
         tier: str | None = None,
         headed: bool = False,
+        capture_xhr: bool = False,
         timeout: float = 240,
     ) -> list[SampleRow]:
         job_id = "snap-" + uuid.uuid4().hex[:8]
         run_dir = self.paths.cache / "snapshot-jobs" / job_id
         run_dir.mkdir(parents=True, exist_ok=True)
         args = ["snapshot", "--urls", json.dumps(urls), "--kind", kind]
+        if capture_xhr:
+            args.append("--capture-xhr")
+            tier = "interactive"  # only a real browser can be watched
         if recipe is not None:
             args += ["--recipe", str(save_recipe(recipe, run_dir / "recipe.json"))]
         args += common_worker_args(
@@ -469,6 +513,7 @@ class RunManager:
                         verdict=rec.get("verdict"),
                         headers=rec.get("headers") or {},
                         title=page_title(rec.get("html") or ""),
+                        xhr=rec.get("xhr") or [],
                     )
                 )
                 p.unlink(missing_ok=True)

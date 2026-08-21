@@ -28,6 +28,16 @@ detail:
   link: { css: "h3 a" }                  # bare element → href is taken automatically
   max_concurrency: 4
   fetch: null                            # optional per-detail fetch override
+source:                                  # where the crawl starts (docs/sources-and-datasets.md)
+  kind: seeds                            # seeds | urls | sitemap
+  urls: []                               # urls: the list to crawl, one row per page
+  sitemap: null                          # sitemap: empty = /sitemap.xml, then robots.txt
+  include: null                          # regex a URL must match
+  exclude: null
+  max_urls: 1000
+incremental:                             # re-run only what changed
+  enabled: false
+  refetch_after_days: 30
 pagination:
   kind: next_link                        # none | next_link | url_template | load_more | infinite_scroll | xhr_json
   selector: "li.next a"                  # next_link / load_more
@@ -43,6 +53,9 @@ fields:
     required: true
     sparse: false                        # true = usually empty (a sale price); empty is a note, not an error
     extract: { css: "h3 a", attr: title }
+    transforms:                          # applied in order, before the type is read
+      - { kind: strip_prefix, value: "Title: " }
+      - { kind: collapse_space }
     alternates: [{ css: "h3::text" }]
     examples: ["A Light in the Attic"]
   - { name: price, type: price, extract: { css: ".price_color::text" } }

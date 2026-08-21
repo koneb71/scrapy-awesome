@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -103,6 +104,41 @@ def delete_recipe(request: Request, recipe_id: str) -> dict[str, Any]:
     if not ok:
         raise HTTPException(404, "recipe not found")
     return {"id": recipe_id, "archived": True}
+
+
+@router.get("/recipes/{recipe_id}/dataset")
+def dataset(
+    request: Request,
+    recipe_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    include_gone: bool = True,
+    changed_days: int | None = None,
+) -> dict[str, Any]:
+    """Everything this recipe has ever seen, one row per item rather than per run."""
+    store: Store = request.app.state.store
+    since = datetime.now(UTC) - timedelta(days=changed_days) if changed_days is not None else None
+    return store.dataset(
+        recipe_id,
+        limit=max(1, min(limit, 1000)),
+        offset=max(0, offset),
+        include_gone=include_gone,
+        changed_since=since,
+    )
+
+
+@router.get("/recipes/{recipe_id}/dataset/history")
+def dataset_history(request: Request, recipe_id: str, key: str) -> dict[str, Any]:
+    """How one row's values have changed, newest last."""
+    store: Store = request.app.state.store
+    return {"key": key, "history": store.dataset_history(recipe_id, key)}
+
+
+@router.delete("/recipes/{recipe_id}/dataset")
+def forget_dataset(request: Request, recipe_id: str) -> dict[str, int]:
+    """Start the dataset over (the runs themselves are untouched)."""
+    store: Store = request.app.state.store
+    return {"forgotten": store.forget_dataset(recipe_id)}
 
 
 @router.get("/recipes/{recipe_id}/versions")

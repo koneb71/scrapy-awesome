@@ -112,6 +112,53 @@ class Extractor(StrictModel):
         return " ".join(parts)
 
 
+TransformKind = Literal[
+    "trim",
+    "collapse_space",
+    "lower",
+    "upper",
+    "title",
+    "strip_prefix",
+    "strip_suffix",
+    "replace",
+    "regex_replace",
+    "split",
+    "prepend",
+    "append",
+    "decimal_comma",
+    "digits",
+    "default",
+]
+
+
+class Transform(StrictModel):
+    """One tidy-up applied to a raw value before it is typed.
+
+    Kept in the recipe rather than in the selector: `.price::text` that also has to survive a
+    "Price:" label is a selector one redesign from breaking, while `strip_prefix` is just true.
+    """
+
+    kind: TransformKind
+    value: str = ""  # the replacement / prefix / suffix / default
+    pattern: str = ""  # what to look for: a substring, a regex, or a split separator
+    chars: str = ""  # trim: which characters (empty = whitespace)
+    index: int | None = None  # split: which piece to keep (empty = keep them all)
+
+    @model_validator(mode="after")
+    def _args(self) -> Transform:
+        needs_pattern = {"replace", "regex_replace"}
+        if self.kind in needs_pattern and not self.pattern:
+            raise ValueError(f"transform {self.kind!r} needs a pattern")
+        if self.kind in ("strip_prefix", "strip_suffix", "prepend", "append") and not self.value:
+            raise ValueError(f"transform {self.kind!r} needs a value")
+        if self.kind == "regex_replace":
+            try:
+                re.compile(self.pattern)
+            except re.error as exc:
+                raise ValueError(f"transform regex {self.pattern!r} is invalid: {exc}") from exc
+        return self
+
+
 class Field(StrictModel):
     name: str
     type: FieldType = "text"
@@ -120,6 +167,7 @@ class Field(StrictModel):
     sparse: bool = False  # empty on most rows by nature (a sale price, a subtitle) — not a fault
     scope: Scope = "list"
     extract: Extractor
+    transforms: list[Transform] = PField(default_factory=list)  # applied in order, before typing
     alternates: list[Extractor] = PField(default_factory=list)
     enum: list[str] | None = None
     examples: list[str] = PField(default_factory=list)
@@ -325,6 +373,60 @@ class ApiConfig(StrictModel):
         return fill(self.url_template), (fill(self.body_template) if self.body_template else None)
 
 
+class Source(StrictModel):
+    """Where the crawl starts.
+
+    `seeds` walks the pages in `Recipe.seeds` (and their pagination). `urls` takes a list you
+    already have — 300 product pages, no list page in sight. `sitemap` reads the site's own index
+    of everything it publishes, which is both better coverage than pagination and the only place
+    most sites tell you *when* a page last changed.
+    """
+
+    kind: Literal["seeds", "urls", "sitemap"] = "seeds"
+    urls: list[str] = PField(default_factory=list)
+    sitemap: str | None = None  # empty = <seed origin>/sitemap.xml, then robots.txt
+    include: str | None = None  # regex a URL must match to be crawled
+    exclude: str | None = None  # ...and one that rules it out
+    max_urls: int = 1000
+
+    @model_validator(mode="after")
+    def _args(self) -> Source:
+        for name in ("include", "exclude"):
+            pattern = getattr(self, name)
+            if pattern:
+                try:
+                    re.compile(pattern)
+                except re.error as exc:
+                    raise ValueError(f"source.{name} is not a valid regex: {exc}") from exc
+        if self.kind == "urls" and not self.urls:
+            raise ValueError("source kind 'urls' needs at least one URL")
+        if self.max_urls < 1:
+            raise ValueError("source.max_urls must be >= 1")
+        return self
+
+
+class Incremental(StrictModel):
+    """Re-run only what changed.
+
+    Every run so far has re-fetched the whole site. With this on, a page the site says has not
+    changed is not fetched again: a sitemap `lastmod` that matches the last run skips the request
+    outright, and otherwise the request carries `If-None-Match` / `If-Modified-Since` so the
+    server can answer `304 Not Modified` for the price of the round trip and no body.
+    """
+
+    enabled: bool = False
+    refetch_after_days: int | None = (
+        30  # look again eventually, however quiet the site claims to be
+    )
+    skip_unchanged_rows: bool = True  # a page that did not change emits nothing
+
+    @model_validator(mode="after")
+    def _args(self) -> Incremental:
+        if self.refetch_after_days is not None and self.refetch_after_days < 1:
+            raise ValueError("incremental.refetch_after_days must be >= 1 (or null)")
+        return self
+
+
 class Limits(StrictModel):
     max_pages: int = 20
     max_items: int = 1000
@@ -346,6 +448,8 @@ class Recipe(StrictModel):
     name: str = "Untitled recipe"
     created_at: datetime = PField(default_factory=lambda: datetime.now(UTC))
     seeds: list[str] = PField(min_length=1)
+    source: Source = PField(default_factory=Source)
+    incremental: Incremental = PField(default_factory=Incremental)
     intent: str = ""
     page_type: PageType = "list"
     allowed_domains: list[str] = PField(default_factory=list)  # empty = domains of seeds
@@ -440,7 +544,9 @@ class Recipe(StrictModel):
         from urllib.parse import urlsplit
 
         out: list[str] = []
-        urls = [*self.seeds]
+        urls = [*self.seeds, *self.source.urls[:50]]
+        if self.source.sitemap:
+            urls.append(self.source.sitemap)
         if self.api:
             urls.append(self.api.url_template)
         for s in urls:

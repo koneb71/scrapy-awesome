@@ -38,6 +38,11 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--resume", action="store_true", help="reuse JOBDIR under run-dir")
     p.add_argument("--headed", action="store_true", help="show browser windows")
     p.add_argument(
+        "--capture-xhr",
+        action="store_true",
+        help="snapshot: record the JSON the page fetches (forces the interactive tier)",
+    )
+    p.add_argument(
         "--storage-state", default=None, help="Playwright storage_state.json for the session"
     )
     p.add_argument("--events-url", default=None)
@@ -145,7 +150,12 @@ def main(argv: list[str] | None = None) -> int:
             print("--urls is required for snapshot mode", file=sys.stderr)
             return 2
         process.crawl(
-            SnapshotSpider, urls=args.urls, kind=args.kind, recipe_path=args.recipe, **common
+            SnapshotSpider,
+            urls=args.urls,
+            kind=args.kind,
+            capture_xhr=args.capture_xhr,
+            recipe_path=args.recipe,
+            **common,
         )
     process.start()  # blocks until the crawl finishes
     stats_file = run_dir / "stats.json"

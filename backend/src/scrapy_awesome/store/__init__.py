@@ -3,8 +3,10 @@
 from scrapy_awesome.store.db import Store, get_store
 from scrapy_awesome.store.models import (
     ChatRow,
+    DatasetRow,
     FailedPageRow,
     ItemRow,
+    PageStateRow,
     RecipeRow,
     RecipeVersionRow,
     RunRow,
@@ -17,8 +19,10 @@ from scrapy_awesome.store.models import (
 
 __all__ = [
     "ChatRow",
+    "DatasetRow",
     "FailedPageRow",
     "ItemRow",
+    "PageStateRow",
     "RecipeRow",
     "RecipeVersionRow",
     "RunRow",

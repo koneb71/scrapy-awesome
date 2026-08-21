@@ -15,7 +15,10 @@ import type {
   Sample,
   SessionRow,
   SettingsResponse,
+  DatasetHistoryEntry,
+  DatasetRow,
   ValidationReport,
+  XhrBlock,
 } from "./types";
 
 export class ApiError extends Error {
@@ -66,6 +69,23 @@ export interface AuthStatus {
 }
 
 export const api = {
+  dataset: (recipeId: string, opts: { include_gone?: boolean; changed_days?: number } = {}) => {
+    const q = new URLSearchParams({ limit: "200" });
+    if (opts.include_gone === false) q.set("include_gone", "false");
+    if (opts.changed_days) q.set("changed_days", String(opts.changed_days));
+    return get<{ total: number; rows: DatasetRow[] }>(`/api/recipes/${recipeId}/dataset?${q}`);
+  },
+  datasetHistory: (recipeId: string, key: string) =>
+    get<{ key: string; history: DatasetHistoryEntry[] }>(
+      `/api/recipes/${recipeId}/dataset/history?key=${encodeURIComponent(key)}`,
+    ),
+  forgetDataset: (recipeId: string) => del<{ forgotten: number }>(`/api/recipes/${recipeId}/dataset`),
+  findApi: (sampleId: string) => post<XhrBlock>(`/api/pages/${sampleId}/find-api`),
+  useXhr: (sampleId: string, recipe: Recipe, url_template: string) =>
+    post<{ recipe: Recipe; endpoint: string; ready: boolean }>(`/api/pages/${sampleId}/use-xhr`, {
+      recipe,
+      url_template,
+    }),
   authStatus: () => get<AuthStatus>("/api/auth/status"),
   authLogin: (username: string, password: string) =>
     post<{ username: string }>("/api/auth/login", { username, password }),

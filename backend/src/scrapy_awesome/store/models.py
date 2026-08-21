@@ -155,7 +155,50 @@ class SampleRow(SQLModel, table=True):
     verdict: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
     headers: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     analysis: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
+    # JSON responses the page itself fetched, when the snapshot was taken with capture on
+    xhr: list[Any] = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_now)
+
+
+class DatasetRow(SQLModel, table=True):
+    """One row of the *dataset*: everything this recipe has ever seen, keyed by its dedupe key.
+
+    Runs are episodes; this is the thing people actually want to keep — when a row first showed
+    up, when it was last seen, how many times it changed, and what the last change was.
+    """
+
+    __tablename__ = "dataset"
+
+    id: str = Field(primary_key=True)  # recipe_id + dedupe key digest
+    recipe_id: str = Field(index=True)
+    key: str = Field(index=True)  # the dedupe key, joined
+    url: str = ""
+    data: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    first_seen: datetime = Field(default_factory=_now)
+    last_seen: datetime = Field(default_factory=_now, index=True)
+    last_changed: datetime | None = None
+    changes: int = 0
+    runs: int = 0
+    gone: bool = False  # last full run did not find it
+    history: list[Any] = Field(default_factory=list, sa_column=Column(JSON))
+
+
+class PageStateRow(SQLModel, table=True):
+    """What we knew about one URL after the last run: enough to ask "has this changed?"."""
+
+    __tablename__ = "page_state"
+
+    id: str = Field(primary_key=True)  # recipe_id + url digest
+    recipe_id: str = Field(index=True)
+    url: str = Field(index=True)
+    etag: str = ""
+    last_modified: str = ""  # the HTTP header, verbatim
+    lastmod: str = ""  # the sitemap's <lastmod>, verbatim
+    content_hash: str = ""
+    status: int = 0
+    items: int = 0  # rows this page produced last time
+    run_id: str = ""
+    fetched_at: datetime = Field(default_factory=_now)
 
 
 class SessionRow(SQLModel, table=True):

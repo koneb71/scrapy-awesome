@@ -11,6 +11,15 @@ fields, preview the result, run the crawl, export JSON / CSV / Excel — everyth
 - **Uses the site's own API when there is one.** Paste a Shopify (or WooCommerce/WordPress) URL and
   the platform is detected and its public JSON endpoint confirmed automatically — complete fields in
   a handful of requests, with the CSS selectors kept as fallbacks. See `docs/api-mode.md`.
+- **Reads the API even when the platform is unknown.** "Find the API this page uses" opens the page
+  in a real browser, watches the JSON it fetches, and offers the endpoint behind the list — after
+  re-fetching it on its own to prove a crawl can use it.
+- **Starts wherever the data is**: a list page, a list of URLs you paste, or the site's sitemap
+  (index and `.gz` included, `robots.txt` consulted when there is no `/sitemap.xml`).
+- **Re-runs only what changed** — a sitemap `lastmod` you already crawled skips the request, and
+  otherwise the ETag from last time turns the page into a `304`.
+- **Keeps a dataset, not just runs** — one row per item across every run, with first seen, last
+  changed, and what changed.
 - **Recipes are plain data** (JSON/YAML) — hand-editable, versioned, shareable.
 - Works with your **Claude Code / Claude Desktop / Gemini CLI** through an MCP server (subscription
   users), or with an **API key** inside the app.
@@ -26,7 +35,7 @@ fields, preview the result, run the crawl, export JSON / CSV / Excel — everyth
 > hand-off for pages selectors can't read, **AI fields**, a **Tauri desktop shell** (`desktop/`),
 > recipe versions, standalone **Scrapy project export**, a Claude Desktop **MCPB** manifest and the
 > opt-in "use my Claude Code login" toggle. See `docs/` (`robustness.md`, `providers.md`,
-> `auth-modes.md`, `api-mode.md`, `signing-in.md`, `recipe-format.md`, `event-protocol.md`).
+> `auth-modes.md`, `api-mode.md`, `signing-in.md`, `sources-and-datasets.md`, `recipe-format.md`, `event-protocol.md`).
 
 ## Quick start (web mode)
 

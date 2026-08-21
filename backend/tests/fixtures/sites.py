@@ -121,6 +121,81 @@ def spa_page(base: str) -> str:
 </body></html>"""
 
 
+SITEMAP_PARTS = 2
+
+
+def sitemap_index() -> str:
+    """The shape most sites serve: an index pointing at per-section url sets."""
+    parts = "".join(
+        f"<sitemap><loc>/sitemap-items-{i}.xml</loc><lastmod>2026-08-0{i + 1}</lastmod></sitemap>"
+        for i in range(SITEMAP_PARTS)
+    )
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{parts}</sitemapindex>'
+
+
+def sitemap_urlset(part: int) -> str:
+    """Half the catalogue per part, plus a page that is not an item (the include filter's job)."""
+    half = len(CATALOG) // SITEMAP_PARTS
+    items = CATALOG[part * half : (part + 1) * half]
+    urls = "".join(
+        f"<url><loc>/static/item/{i['id']}</loc>"
+        f"<lastmod>2026-08-{(i['id'] % 28) + 1:02d}</lastmod></url>"
+        for i in items
+    )
+    urls += f"<url><loc>/static/about-{part}.html</loc><lastmod>2026-01-01</lastmod></url>"
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}</urlset>'
+
+
+def xhr_api(page: int = 1, limit: int = 5) -> dict:
+    """`/xhr/api/items?page=&limit=` — the endpoint the SPA below reads itself from."""
+    start = (page - 1) * limit
+    items = CATALOG[start : start + limit]
+    return {
+        "meta": {"total": len(CATALOG), "page": page},
+        "results": [
+            {
+                "id": i["id"],
+                "productName": i["title"],
+                "priceCents": int(float(i["price"].lstrip("£")) * 100),
+                "price": i["price"].lstrip("£"),
+                "detailUrl": f"/xhr/item/{i['id']}",
+                "inStock": i["in_stock"],
+                "publishedAt": "2026-01-0{}T10:00:00Z".format((i["id"] % 9) + 1),
+            }
+            for i in items
+        ],
+    }
+
+
+def xhr_page(base: str) -> str:
+    """A page that renders nothing server-side and fetches its list — the shape the capture is
+    for. It also pings an analytics endpoint that returns a JSON array, which a scorer that only
+    looked for "an array of objects" would happily pick instead."""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>XHR list</title></head>
+<body>
+<div id="app">Loading…</div>
+<script>
+  fetch('{base}/collect', {{method: 'POST', headers: {{'content-type': 'application/json'}},
+        body: JSON.stringify({{e: 'pageview'}})}});
+  fetch('{base}/api/items?page=1&limit=5')
+    .then(r => r.json())
+    .then(d => {{
+      const app = document.getElementById('app');
+      app.innerHTML = '';
+      const list = document.createElement('section'); list.id = 'results';
+      for (const it of d.results) {{
+        const a = document.createElement('article'); a.className = 'card';
+        a.innerHTML = `<h3><a href="{base}/item/${{it.id}}">${{it.productName}}</a></h3>` +
+                      `<p class="price">£${{it.price}}</p>`;
+        list.appendChild(a);
+      }}
+      app.appendChild(list);
+      document.title = 'XHR list – rendered';
+    }});
+</script>
+</body></html>"""
+
+
 def embedded_json_page(base: str) -> str:
     payload = {"props": {"pageProps": {"products": CATALOG[:ITEMS_PER_PAGE], "nextPage": None}}}
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>Embedded JSON</title></head>

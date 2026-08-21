@@ -4,6 +4,7 @@ threadpool, and item inserts are batched. One `Store` per server process."""
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import threading
 import uuid
@@ -18,9 +19,11 @@ from scrapy_awesome.config import Paths, get_paths
 from scrapy_awesome.recipe.models import Recipe
 from scrapy_awesome.store.models import (
     ChatRow,
+    DatasetRow,
     FailedPageRow,
     ItemRow,
     NoteRow,
+    PageStateRow,
     RecipeRow,
     RecipeVersionRow,
     RunRow,
@@ -28,6 +31,7 @@ from scrapy_awesome.store.models import (
     ScheduleRow,
     SessionRow,
     TierMemoryRow,
+    iso,
 )
 
 SCHEMA_VERSION = "1"
@@ -287,6 +291,7 @@ class Store:
         headers: dict[str, Any] | None,
         title: str = "",
         analysis: dict[str, Any] | None = None,
+        xhr: list[Any] | None = None,
     ) -> SampleRow:
         sid = uuid.uuid4().hex[:12]
         self.paths.ensure()
@@ -308,6 +313,7 @@ class Store:
                 verdict=verdict,
                 headers=headers or {},
                 analysis=analysis,
+                xhr=xhr or [],
             )
             s.add(row)
             s.commit()
@@ -502,6 +508,174 @@ class Store:
             if row:
                 s.expunge(row)
             return row
+
+    # ------------------------------------------------------------------ dataset (across runs)
+    HISTORY_MAX = 20
+
+    def fold_run_into_dataset(
+        self, recipe_id: str, run_id: str, keys: list[str], *, partial: bool = False
+    ) -> dict[str, int]:
+        """Merge a finished run into the recipe's dataset. Returns what happened, for the UI.
+
+        `partial` (an incremental run) means "absent" carries no information, so rows the run did
+        not visit keep whatever they had — only a full run may mark something gone.
+        """
+        now = _now()
+        seen: set[str] = set()
+        added = changed = unchanged = 0
+        with self._write_lock, self.session() as s:
+            for row in self.iter_items(run_id):
+                key = "␟".join(str(row.get(k, "")) for k in (keys or ["_url"]))
+                digest = hashlib.sha1(f"{recipe_id}|{key}".encode()).hexdigest()[:24]
+                seen.add(digest)
+                visible = {k: v for k, v in row.items() if not k.startswith("_")}
+                existing = s.get(DatasetRow, digest)
+                if existing is None:
+                    s.add(
+                        DatasetRow(
+                            id=digest,
+                            recipe_id=recipe_id,
+                            key=key,
+                            url=str(row.get("_url") or ""),
+                            data=visible,
+                            first_seen=now,
+                            last_seen=now,
+                            runs=1,
+                        )
+                    )
+                    added += 1
+                    continue
+                existing.last_seen = now
+                existing.runs += 1
+                existing.gone = False
+                diff = {
+                    k: [existing.data.get(k), visible.get(k)]
+                    for k in set(existing.data) | set(visible)
+                    if existing.data.get(k) != visible.get(k)
+                }
+                if diff:
+                    existing.history = (
+                        [*(existing.history or []), {"at": iso(now), "diff": diff}]
+                    )[-self.HISTORY_MAX :]
+                    existing.data = visible
+                    existing.url = str(row.get("_url") or existing.url)
+                    existing.last_changed = now
+                    existing.changes += 1
+                    changed += 1
+                else:
+                    unchanged += 1
+                s.add(existing)
+            gone = 0
+            if not partial:
+                for other in s.exec(
+                    select(DatasetRow).where(DatasetRow.recipe_id == recipe_id)
+                ).all():
+                    if other.id not in seen and not other.gone:
+                        other.gone = True
+                        s.add(other)
+                        gone += 1
+            s.commit()
+        return {"added": added, "changed": changed, "unchanged": unchanged, "gone": gone}
+
+    def dataset(
+        self,
+        recipe_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        include_gone: bool = True,
+        changed_since: datetime | None = None,
+    ) -> dict[str, Any]:
+        with self.session() as s:
+            q = select(DatasetRow).where(DatasetRow.recipe_id == recipe_id)
+            if not include_gone:
+                q = q.where(DatasetRow.gone == False)  # noqa: E712 - SQL, not Python
+            if changed_since is not None:
+                q = q.where(DatasetRow.last_changed >= changed_since)
+            total = len(s.exec(q).all())
+            rows = s.exec(
+                q.order_by(DatasetRow.last_seen.desc()).offset(offset).limit(limit)  # type: ignore[union-attr]
+            ).all()
+        return {
+            "total": total,
+            "rows": [
+                {
+                    "key": r.key,
+                    "url": r.url,
+                    "first_seen": iso(r.first_seen),
+                    "last_seen": iso(r.last_seen),
+                    "last_changed": iso(r.last_changed) if r.last_changed else None,
+                    "changes": r.changes,
+                    "runs": r.runs,
+                    "gone": r.gone,
+                    **r.data,
+                }
+                for r in rows
+            ],
+        }
+
+    def dataset_history(self, recipe_id: str, key: str) -> list[dict[str, Any]]:
+        digest = hashlib.sha1(f"{recipe_id}|{key}".encode()).hexdigest()[:24]
+        with self.session() as s:
+            row = s.get(DatasetRow, digest)
+            return list(row.history or []) if row else []
+
+    def forget_dataset(self, recipe_id: str) -> int:
+        with self._write_lock, self.session() as s:
+            rows = s.exec(select(DatasetRow).where(DatasetRow.recipe_id == recipe_id)).all()
+            for r in rows:
+                s.delete(r)
+            s.commit()
+            return len(rows)
+
+    # ------------------------------------------------------------------ page state (incremental)
+    def page_state(self, recipe_id: str) -> dict[str, dict[str, Any]]:
+        """What the last run learned about each URL, keyed by URL."""
+        with self.session() as s:
+            rows = s.exec(select(PageStateRow).where(PageStateRow.recipe_id == recipe_id)).all()
+        return {
+            r.url: {
+                "etag": r.etag,
+                "last_modified": r.last_modified,
+                "lastmod": r.lastmod,
+                "content_hash": r.content_hash,
+                "items": r.items,
+                "fetched_at": iso(r.fetched_at),
+            }
+            for r in rows
+        }
+
+    def remember_page_state(self, recipe_id: str, entries: list[dict[str, Any]]) -> int:
+        """Upsert what a run learned. One transaction: a 25k-URL sitemap run is one write."""
+        if not entries:
+            return 0
+        now = _now()
+        with self._write_lock, self.session() as s:
+            for e in entries:
+                url = str(e.get("url") or "")
+                if not url:
+                    continue
+                sid = hashlib.sha1(f"{recipe_id}|{url}".encode()).hexdigest()[:24]
+                row = s.get(PageStateRow, sid) or PageStateRow(id=sid, recipe_id=recipe_id, url=url)
+                row.etag = str(e.get("etag") or "")
+                row.last_modified = str(e.get("last_modified") or "")
+                row.lastmod = str(e.get("lastmod") or "")
+                row.content_hash = str(e.get("content_hash") or "")
+                row.status = int(e.get("status") or 0)
+                row.items = int(e.get("items") or 0)
+                row.run_id = str(e.get("run_id") or "")
+                row.fetched_at = now
+                s.add(row)
+            s.commit()
+        return len(entries)
+
+    def forget_page_state(self, recipe_id: str) -> int:
+        with self._write_lock, self.session() as s:
+            rows = s.exec(select(PageStateRow).where(PageStateRow.recipe_id == recipe_id)).all()
+            for r in rows:
+                s.delete(r)
+            s.commit()
+            return len(rows)
 
     # ------------------------------------------------------------------ notes (key/value)
     def get_note(self, key: str) -> str | None:

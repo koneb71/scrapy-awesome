@@ -12,9 +12,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AnalysisCard } from "@/components/recipe/AnalysisCard";
 import { PlatformCard } from "@/components/recipe/PlatformCard";
+import { XhrCard } from "@/components/recipe/XhrCard";
 import { FieldsTab } from "@/components/recipe/FieldsTab";
 import { PreviewTab } from "@/components/recipe/PreviewTab";
 import { PlanTab } from "@/components/recipe/PlanTab";
+import { DatasetTab } from "@/components/recipe/DatasetTab";
 import { PickerDialog, type PickTarget } from "@/components/recipe/PickerDialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -234,6 +236,7 @@ export default function RecipeEditor() {
           <TabsTrigger value="fields">2 · Fields</TabsTrigger>
           <TabsTrigger value="preview">3 · Preview {report && (report.ok ? "✓" : "!")}</TabsTrigger>
           <TabsTrigger value="plan">4 · Plan & run</TabsTrigger>
+          <TabsTrigger value="dataset">Dataset</TabsTrigger>
           <TabsTrigger value="json" onClick={() => setJson(JSON.stringify(recipe, null, 2))}>JSON</TabsTrigger>
           <TabsTrigger value="versions">Versions</TabsTrigger>
         </TabsList>
@@ -264,6 +267,17 @@ export default function RecipeEditor() {
                     list: container ? { ...recipe.list!, container, alternates: (recipe.list?.alternates ?? []).slice(1) } : recipe.list,
                   });
                   toast.info("Back to scraping the page");
+                }}
+              />
+              <XhrCard
+                sample={analysisSample}
+                recipe={recipe}
+                usingApi={!!recipe.api}
+                onUseXhr={(r, endpoint) => {
+                  change(r);
+                  setReport(null);
+                  toast.success(`Reading ${endpoint} — press Preview to validate`);
+                  setTab("preview");
                 }}
               />
               <AnalysisCard sample={analysisSample} recipe={recipe} onChange={change} />
@@ -308,6 +322,9 @@ export default function RecipeEditor() {
         </TabsContent>
         <TabsContent value="plan" className="pt-3">
           <PlanTab recipe={recipe} onChange={change} onRun={() => run.mutate()} running={run.isPending} recipeId={id} />
+        </TabsContent>
+        <TabsContent value="dataset" className="pt-3">
+          <DatasetTab recipeId={id} />
         </TabsContent>
         <TabsContent value="json" className="pt-3 space-y-2">
           <Textarea value={json} onChange={(e) => setJson(e.target.value)} rows={28} className="font-mono text-xs" />

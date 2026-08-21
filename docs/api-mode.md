@@ -79,6 +79,28 @@ Two details worth knowing:
   item" on; a `/products.json` row already carries every field, so switching turns it back off —
   unless the recipe has detail-scope fields, in which case the row's `url` field is followed.
 
+## When the platform is not one we recognise: watch what the page fetches
+
+Detection above knows Shopify, WordPress and WooCommerce. Everything else gets the general case,
+on the Analyze tab: **Find the API this page uses** opens the page in a real browser, records every
+JSON response it fetches, and ranks them by how much they look like the list on screen —
+
+* the array is what the response is *about* (near the top, not a side rail),
+* its values are text you can see on the page (the strongest signal by far),
+* the URL looks like an API, and has a paging parameter,
+* minus points for anything that looks like analytics, telemetry or consent.
+
+The winner's query string becomes the paging: `page=2` is a page number, `offset=40` is a row
+number that steps by the page size, `cursor=` with a `next_cursor` in the body is a cursor. Its
+first item's keys become fields, typed by name and value (`priceCents` → number, `imageUrl` →
+image, `publishedAt` → date).
+
+Then it is **re-fetched on its own**, robots-checked, with no browser and no page session. An
+endpoint that only answers inside the page is not one a crawl can use, and it is refused with that
+reason rather than offered and left to fail later.
+
+Request headers are never recorded — they carry tokens.
+
 ## Preview reads the API, not the page
 
 The preview gate fetches `api.url_template` (page 1, then page 2 of the API's own paging) — the

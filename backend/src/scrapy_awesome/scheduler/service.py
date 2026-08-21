@@ -273,7 +273,12 @@ class Scheduler:
             return None
         rec = self.store.get_recipe(run.recipe_id or "")
         keys = rec.dedupe_key if rec else ["_url"]
-        d = diff_rows(self.store.iter_items(prev.id), self.store.iter_items(run.id), keys)
+        d = diff_rows(
+            self.store.iter_items(prev.id),
+            self.store.iter_items(run.id),
+            keys,
+            partial=bool((run.stats or {}).get("skipped")),
+        )
         d["against_run_id"] = prev.id
         d["against_finished_at"] = iso(prev.finished_at)
         return d

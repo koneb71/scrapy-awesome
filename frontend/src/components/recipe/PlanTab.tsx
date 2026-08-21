@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Play } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Action, Recipe } from "@/lib/types";
+import type { Action, Incremental, Recipe, Source } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,8 +33,113 @@ export function PlanTab({
   const setActions = (a: Action[]) => setFetch({ actions: a });
   const estPages = Math.min(lim.max_pages, 9999) * (recipe.detail.enabled ? 1 + 20 : 1);
 
+  const src: Source = recipe.source ?? { kind: "seeds", urls: [], max_urls: 1000 };
+  const inc: Incremental = recipe.incremental ?? { enabled: false, refetch_after_days: 30 };
+  const setInc = (patch: Partial<Incremental>) =>
+    onChange({ ...recipe, incremental: { ...inc, ...patch } });
+  const setSrc = (patch: Partial<Source>) => onChange({ ...recipe, source: { ...src, ...patch } });
+
   return (
     <div className="grid gap-4 md:grid-cols-2">
+      <Card className="md:col-span-2">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Where the crawl starts</CardTitle>
+          <CardDescription>
+            A list page and its pagination, a list of URLs you already have, or the site's own
+            sitemap — which usually covers more than pagination does.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <Select value={src.kind} onValueChange={(v) => setSrc({ kind: v as Source["kind"] })}>
+            <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="seeds">The seed page (and pagination)</SelectItem>
+              <SelectItem value="urls">A list of URLs</SelectItem>
+              <SelectItem value="sitemap">The site's sitemap</SelectItem>
+            </SelectContent>
+          </Select>
+          {src.kind === "urls" && (
+            <div>
+              <Label>URLs (one per line)</Label>
+              <textarea
+                className="w-full rounded-md border bg-background p-2 font-mono text-xs h-32"
+                defaultValue={(src.urls ?? []).join("\n")}
+                placeholder={"https://site.com/product/1\nhttps://site.com/product/2"}
+                onBlur={(e) =>
+                  setSrc({
+                    urls: e.target.value.split(/[\s,]+/).map((u) => u.trim()).filter(Boolean),
+                  })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                {(src.urls ?? []).length} URLs · each one becomes a row, so set the fields to{" "}
+                <b>page</b> scope in the Fields tab.
+              </p>
+            </div>
+          )}
+          {src.kind === "sitemap" && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <Label>Sitemap URL</Label>
+                <Input
+                  defaultValue={src.sitemap ?? ""}
+                  placeholder="empty = /sitemap.xml, then whatever robots.txt names"
+                  onBlur={(e) => setSrc({ sitemap: e.target.value || null })}
+                />
+              </div>
+              <div>
+                <Label>Only URLs matching (regex)</Label>
+                <Input defaultValue={src.include ?? ""} placeholder="/product/" onBlur={(e) => setSrc({ include: e.target.value || null })} />
+              </div>
+              <div>
+                <Label>Skip URLs matching (regex)</Label>
+                <Input defaultValue={src.exclude ?? ""} placeholder="/tag/|/page/" onBlur={(e) => setSrc({ exclude: e.target.value || null })} />
+              </div>
+              <div>
+                <Label>Max URLs</Label>
+                <Input type="number" min={1} value={src.max_urls ?? 1000} onChange={(e) => setSrc({ max_urls: +e.target.value || 1 })} />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="md:col-span-2">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Re-runs</CardTitle>
+          <CardDescription>
+            What a scheduled re-run should do about pages that have not changed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-4 text-sm">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={!!inc.enabled}
+              onCheckedChange={(v) => setInc({ enabled: v })}
+            />
+            <Label>Only fetch what changed</Label>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Look again after</Label>
+            <Input
+              type="number"
+              min={1}
+              className="w-20"
+              disabled={!inc.enabled}
+              value={inc.refetch_after_days ?? 30}
+              onChange={(e) => setInc({ refetch_after_days: +e.target.value || 1 })}
+            />
+            <span className="text-xs text-muted-foreground">days, whatever the site claims</span>
+          </div>
+          <p className="w-full text-xs text-muted-foreground">
+            A sitemap <code>lastmod</code> you have already crawled skips the request entirely;
+            otherwise the request carries the ETag from last time, and a <code>304</code> costs a
+            round trip and no body. Diffs from an incremental run report new and changed rows only —
+            a page nobody looked at is not a page that disappeared.
+          </p>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">Limits</CardTitle><CardDescription>Stop conditions for the run.</CardDescription></CardHeader>
         <CardContent className="grid grid-cols-2 gap-3 text-sm">
